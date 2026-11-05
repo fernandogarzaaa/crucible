@@ -1,0 +1,14 @@
+{
+  "name": "@crucible/server",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": { "crucible-server": "./dist/index.js" },
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
+  "scripts": { "build": "tsc -p tsconfig.json", "typecheck": "tsc -p tsconfig.json --noEmit", "test": "vitest run --passWithNoTests", "dev": "tsx watch src/index.ts", "start": "node dist/index.js" },
+  "dependencies": {
+    "@crucible/agents": "workspace:*", "@crucible/core": "workspace:*", "@crucible/evals": "workspace:*", "@crucible/gateway": "workspace:*", "@crucible/rag": "workspace:*",
+    "@hono/node-server": "^1.13.0", "hono": "^4.6.0", "zod": "^3.24.0"
+  }
+}

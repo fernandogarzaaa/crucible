@@ -1,0 +1,29 @@
+name: evals
+on:
+  pull_request:
+  push: { branches: [main] }
+jobs:
+  test-and-eval:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 10 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm test
+      # Restore the previous eval database so "baseline: latest" has something to compare against.
+      - uses: actions/cache@v4
+        with: { path: .crucible, key: crucible-evals-${{ github.ref_name }}, restore-keys: crucible-evals- }
+      - name: Run evals and fail on regression
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          node apps/cli/dist/index.js init
+          node apps/cli/dist/index.js eval run evals/example.eval.json --fail-on-regression --json > eval-report.json
+          node -e "const r=require('./eval-report.json'); console.log('passed:', r.passed, 'regressions:', r.regressions); console.table(Object.entries(r.summary.scores).map(([k,v])=>({scorer:k,mean:v.mean.toFixed(3),passRate:v.passRate})))"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: eval-report, path: eval-report.json }

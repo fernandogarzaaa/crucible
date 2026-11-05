@@ -1,0 +1,11 @@
+services:
+  crucible:
+    build: .
+    ports: ["4800:4800"]
+    environment:
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      CRUCIBLE_ADMIN_TOKEN: ${CRUCIBLE_ADMIN_TOKEN:-}
+    volumes: ["crucible-data:/data"]
+volumes:
+  crucible-data: {}
