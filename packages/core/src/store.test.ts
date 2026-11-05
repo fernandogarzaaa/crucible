@@ -96,3 +96,12 @@ describe.each([["sqlite", () => Store.memory()], ["postgres (pglite)", () => Sto
     s.close();
   });
 });
+
+describe("ids", () => {
+  it("generates monotonic, sortable ids within the same millisecond", async () => {
+    const { ulid } = await import("./ids.js");
+    const ids = Array.from({ length: 500 }, () => ulid(1_700_000_000_000));
+    expect([...ids].sort()).toEqual(ids);
+    expect(new Set(ids).size).toBe(500);
+  });
+});

@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { z } from "zod";
 import { ScorerConfig } from "@crucible/core";
-import { loadEvalSpec, runEval } from "@crucible/evals";
+import { calibrateJudge, loadEvalSpec, runEval } from "@crucible/evals";
 import type { Env } from "../context.js";
 
 export const evals = new Hono<Env>();
@@ -23,6 +23,14 @@ evals.post("/projects/:p/evals/spec", async (c) => {
   const { evalId } = loadEvalSpec(c.var.ctx.store, { ...spec, project: project.slug });
   if (c.req.query("run") !== "false") startEval(c.var.ctx, evalId);
   return c.json(c.var.ctx.store.evals.get(evalId), 201);
+});
+
+/** Judge calibration against a human-labelled golden dataset. */
+evals.post("/projects/:p/evals/calibrate", async (c) => {
+  const body = z.object({ datasetId: z.string(), judge: z.object({ model: z.string(), rubric: z.string(), scale: z.tuple([z.number(), z.number()]).default([0, 1]), passThreshold: z.number().optional() }), concurrency: z.number().int().positive().optional() }).parse(await c.req.json());
+  const report = await calibrateJudge({ store: c.var.ctx.store, gateway: c.var.ctx.gateway, projectId: c.var.projectId, datasetId: body.datasetId, judge: { type: "llm_judge", runIf: "always", ...body.judge }, concurrency: body.concurrency });
+  c.var.ctx.store.ops.audit({ projectId: c.var.projectId, actor: c.var.actor, action: "eval.calibrate", targetType: "dataset", targetId: body.datasetId, details: { n: report.n, agreement: report.agreement, kappa: report.kappa } });
+  return c.json(report);
 });
 
 evals.get("/evals/:id", (c) => {

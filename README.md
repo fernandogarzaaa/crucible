@@ -5,7 +5,7 @@
 | Module | What it does |
 | --- | --- |
 | **Workbench** | Versioned prompts with labels (`support-reply@production`), datasets, a playground with side-by-side model comparison |
-| **Evals** | Assertion, similarity, JSON-schema, latency, cost and LLM-as-judge scorers. Declarative spec files for CI. Baseline comparison with per-item regression detection |
+| **Evals** | Assertion, similarity, JSON-schema, latency, cost and LLM-as-judge scorers. Declarative spec files for CI. Baseline comparison with per-item regression detection. Judges can be gated on deterministic preflight checks, and `crucible eval calibrate` measures a judge against human labels (agreement, true-positive/negative rates, Cohen's kappa, disagreements) |
 | **Tracing** | Traces and spans aligned with the OpenTelemetry GenAI conventions (llm / tool / retriever / agent), waterfall view, cost and token accounting, a zero-dependency SDK, and an OTLP/HTTP receiver so any OpenTelemetry SDK can export straight to Crucible |
 | **Agent debugger** | Every agent run is an ordered event log. **Replay** deterministically, **fork** from any step with a patched tool result or a different model, **diff** two runs, **kill** a runaway run. Recorded responses are matched by request input, so a fork after a prompt change replays only the unaffected prefix and reports where it diverged |
 | **Gateway** | OpenAI-compatible `/v1/chat/completions` and Anthropic-compatible `/v1/messages` in front of Anthropic, OpenAI, Ollama, Groq, OpenRouter. Routes with fallback / round-robin / cheapest / weighted strategies, response caching, PII redaction, per-key rate limits, hard-stop budgets, full request log |
@@ -96,6 +96,17 @@ export default (ctx) => [{
 
 Registered agents can be run, replayed and forked live from the UI and the CLI. Agents built with other frameworks can still push their event logs through `POST /api/projects/:p/runs/ingest` and get the same timeline, diff and event-level forking.
 
+## Calibrating an LLM judge
+
+Judges drift and carry biases (verbosity, position, self-preference). Before using one as a release gate, score a human-labelled golden set with it. Items carry the candidate response under `metadata.output` and the human verdict in `expected` (`true`/`false`, `"pass"`/`"fail"`, or `{ "pass": false, "critique": "..." }`).
+
+```bash
+crucible dataset import golden golden.json
+crucible eval calibrate golden --judge '{"model":"smart","rubric":"Is the answer factually correct?","scale":[1,5],"passThreshold":4}'
+```
+
+The report lists every disagreement with the judge's reason next to the human critique, so the rubric can be refined until agreement exceeds 90 percent. Evals also warn when the judge model equals the model under test, and `"runIf": "preflight_passed"` on an `llm_judge` scorer skips the judge (and its cost) when deterministic scorers already failed.
+
 ## Sending OpenTelemetry traces
 
 Crucible accepts OTLP/HTTP JSON on `/v1/traces` and maps `gen_ai.*` attributes (operation name, model, provider, token usage, opt-in message content, tool arguments) onto its span model, storing the scope schema URL on each span so attribute renames across convention versions do not break history.
@@ -106,7 +117,7 @@ export OTEL_EXPORTER_OTLP_PROTOCOL=http/json
 export OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true   # content is opt-in in the OTel spec
 ```
 
-Protobuf payloads are not accepted yet.
+Both `application/json` and `application/x-protobuf` (the SDK default) are accepted, optionally gzip-encoded; the protobuf path uses a small built-in decoder with no protobuf runtime dependency.
 
 ## Evals in CI
 
@@ -144,7 +155,8 @@ Everything in this repository is Apache-2.0, including the Postgres backend. The
 ## Development
 
 ```bash
-pnpm test          # vitest across all packages, each store/server test runs on SQLite and on embedded Postgres
+pnpm test          # vitest across all packages; store/server suites run on SQLite and embedded Postgres (PGlite)
+CRUCIBLE_TEST_PG_URL=postgres://user@localhost:5432/crucible pnpm test   # also runs the real-Postgres suites (CI does this with a service container)
 pnpm typecheck
 pnpm --filter @crucible/web dev     # Vite dev server on :4801 proxying to the API on :4800
 ```

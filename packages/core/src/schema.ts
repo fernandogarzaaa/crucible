@@ -194,6 +194,8 @@ export const ScorerConfig = z.discriminatedUnion("type", [
     rubric: z.string(),
     scale: z.tuple([z.number(), z.number()]).default([0, 1]),
     passThreshold: z.number().optional(),
+    /** "preflight_passed": only pay for the judge when every deterministic scorer passed (Promptfoo-style tiered evals). */
+    runIf: z.enum(["always", "preflight_passed"]).default("always"),
   }),
   z.object({ type: z.literal("latency"), maxMs: z.number().positive() }),
   z.object({ type: z.literal("cost"), maxUsd: z.number().positive() }),

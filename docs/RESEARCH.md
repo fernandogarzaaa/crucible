@@ -46,7 +46,7 @@
 - Datadog was among the first commercial backends to support v1.37+ natively; OpenLLMetry still emits a pre-convention shape.
 - Gateway caveat from a comparison guide: "OpenAI-compatible" does not guarantee identical behavior across models or response fields; pilot with real traffic.
 
-**Implications already reflected in Crucible.** Span kinds use the OTel vocabulary (`llm`, `tool`, `retriever`, `embedding`, `agent`, `chain`). Content is captured by default because it is a debugging tool, with gateway-level redaction as the control. An OTLP ingest endpoint mapping `gen_ai.*` attributes to the span table is the next step, and it should carry a schema version so attribute renames do not break history.
+**Implications already reflected in Crucible.** Span kinds use the OTel vocabulary (`llm`, `tool`, `retriever`, `embedding`, `agent`, `chain`). Content is captured by default because it is a debugging tool, with gateway-level redaction as the control. The OTLP receiver on `/v1/traces` (JSON and protobuf) maps `gen_ai.*` attributes to the span table, accepts both current and pre-v1.37 attribute names, and stores the scope schema URL per span so renames do not break history.
 
 ## C. Market and positioning
 
@@ -77,7 +77,7 @@
 - Temporal's position: determinism applies to workflow code only; LLM calls and tools run as Activities; on crash the workflow replays from event history without re-invoking the LLM for decisions already made. OpenAI's Codex web agent and Replit Agent 3 are built on Temporal. This is durable execution for recovery, not a debugging replay with forking.
 - AgentOps uses a proprietary event model rather than OpenTelemetry.
 
-**What remains unsolved** (synthesis, not sourced): input-matched rather than order-matched stubbing so a fork survives small prompt changes; replay across frameworks rather than per-framework plugins; turning a recorded run into a regression test with tolerance for benign non-determinism; replaying human approvals rather than re-prompting for them. Crucible's runtime does order-matched record-and-stub with replayed approvals skipped; input-matched stubbing and cross-framework ingestion via the run-ingest endpoint are the next two steps.
+**What remains unsolved** (synthesis, not sourced): replay across frameworks rather than per-framework plugins; turning a recorded run into a regression test with tolerance for benign non-determinism; replaying human approvals rather than re-prompting for them. Crucible's runtime now does input-matched record-and-stub (recorded responses are reused only while request hashes match, then execution goes live and the divergence point is recorded) with replayed approvals skipped, and external agents can push event logs through the run-ingest endpoint; tolerance-aware regression suites are the open step.
 
 ## Eval design references (verified)
 
@@ -89,7 +89,7 @@
 
 **Extracted, not verified.** Hamel Husain's "critique shadowing": a single domain expert labels pass/fail with reusable critiques, reach above 90 percent agreement in about three iterations, report true positive and true negative rates rather than raw agreement, and collect roughly 100 examples per failure mode. An EMNLP 2026 Findings paper documents position bias in rubric-based judging whose direction is model-specific; permuting rubric option order attenuates it.
 
-**Crucible mapping.** The `llm_judge` scorer already returns a normalized score plus a pass flag with a threshold. To do: rubric option permutation, a "judge model must differ from target model" warning, a calibration workflow against a golden dataset, and a preflight ordering so deterministic scorers run before the judge.
+**Crucible mapping.** The `llm_judge` scorer returns a normalized score plus a pass flag with a threshold. Implemented from this research: deterministic scorers run before judges and `runIf: "preflight_passed"` skips the judge when they fail; evals warn when the judge model equals the model under test or when a judge has no pass threshold; `crucible eval calibrate` scores a human-labelled golden set and reports agreement, true-positive and true-negative rates, Cohen's kappa and every disagreement with critiques. Not implemented: rubric option permutation (Crucible's judge asks for a numeric score rather than a multiple-choice rubric, so the position bias the EMNLP paper describes applies less directly).
 
 ## Refuted claims (do not reuse)
 

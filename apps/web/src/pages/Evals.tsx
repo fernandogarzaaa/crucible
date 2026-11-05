@@ -28,7 +28,7 @@ function EvalList() {
 const SCORER_PRESETS: Record<string, any> = {
   exact_match: { type: "exact_match" }, contains: { type: "contains" }, regex: { type: "regex", pattern: "^\\s*\\S" }, json_schema: { type: "json_schema", schema: { type: "object" } },
   levenshtein: { type: "levenshtein", threshold: 0.8 }, latency: { type: "latency", maxMs: 5000 }, cost: { type: "cost", maxUsd: 0.01 },
-  llm_judge: { type: "llm_judge", model: "fast", rubric: "Is the response correct, helpful and concise?", scale: [1, 5], passThreshold: 4 },
+  llm_judge: { type: "llm_judge", model: "smart", rubric: "Is the response correct, helpful and concise?", scale: [1, 5], passThreshold: 4, runIf: "preflight_passed" },
 };
 
 function EvalCreator({ project, onDone }: { project: string; onDone: (id?: string) => void }) {
@@ -74,6 +74,7 @@ function EvalDetail({ id }: { id: string }) {
       <div className="card stat"><div className="l">Cost</div><div className="v">{fmt.usd(s.costUsd)}</div><div className="d">avg latency {fmt.ms(s.avgLatencyMs)}</div></div>
       {Object.entries(s.scores).slice(0, 2).map(([k, v]: any) => <div key={k} className="card stat"><div className="l">{k}</div><div className="v">{v.passRate !== null ? fmt.pct(v.passRate) : v.mean.toFixed(3)}</div><div className="d">mean {v.mean.toFixed(3)} · n={v.n}</div></div>)}
     </div>
+    {Array.isArray(data.summary?.warnings) && data.summary.warnings.length > 0 && <div className="card" style={{ marginBottom: 14, borderColor: "#78350f" }}>{data.summary.warnings.map((w: string, i: number) => <div key={i} className="small" style={{ color: "var(--warn)" }}>⚠ {w}</div>)}</div>}
     {data.compare && <div className="card" style={{ marginBottom: 14, borderColor: data.compare.regressions.length ? "#7f1d1d" : "#14532d" }}><strong>vs baseline:</strong> <span style={{ color: data.compare.regressions.length ? "var(--err)" : "var(--ok)" }}>{data.compare.regressions.length} regressions</span> · {data.compare.improvements.length} improvements · <Link to={`/evals/${data.baselineEvalId}`}>open baseline</Link></div>}
     <Tabs tabs={[["results", `Results (${data.results.length})`], ["regressions", "Regressions"], ["config", "Config"]]} value={tab} onChange={setTab} />
     {tab === "results" && <>

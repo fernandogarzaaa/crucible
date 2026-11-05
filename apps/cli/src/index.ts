@@ -3,7 +3,7 @@ import { parseArgs } from "node:util";
 import { writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { Store } from "@crucible/core";
 import { Gateway, MemoryCache, Router, RouterConfig, providersFromEnv } from "@crucible/gateway";
-import { loadEvalSpec, runEval } from "@crucible/evals";
+import { calibrateJudge, loadEvalSpec, runEval } from "@crucible/evals";
 import { AgentRuntime, diffRuns } from "@crucible/agents";
 import { RagPipeline } from "@crucible/rag";
 import { createContext, startServer } from "@crucible/server";
@@ -18,6 +18,7 @@ const HELP = `crucible <command> [subcommand] [options]
 
   eval run <spec.json> [--fail-on-regression] [--json] [--concurrency N]
   eval list | eval show <evalId>
+  eval calibrate <dataset> --judge '<llm_judge json>'   Judge vs human labels: agreement, TP/TN rates, kappa, disagreements
 
   prompt list | prompt show <name> | prompt push <file.json> | prompt label <name@version> <label>
   dataset list | dataset import <name> <items.json|.jsonl>
@@ -44,7 +45,7 @@ const { values: flags, positionals } = parseArgs({
     project: { type: "string", default: "default" }, json: { type: "boolean", default: false }, help: { type: "boolean", default: false },
     port: { type: "string" }, host: { type: "string" }, "fail-on-regression": { type: "boolean", default: false }, concurrency: { type: "string" },
     limit: { type: "string" }, search: { type: "string" }, status: { type: "string" }, patch: { type: "string" }, model: { type: "string" },
-    chunk: { type: "string" }, overlap: { type: "string" }, match: { type: "string" }, embedding: { type: "string" }, k: { type: "string", short: "k" }, mode: { type: "string" }, reason: { type: "string" },
+    chunk: { type: "string" }, overlap: { type: "string" }, match: { type: "string" }, judge: { type: "string" }, embedding: { type: "string" }, k: { type: "string", short: "k" }, mode: { type: "string" }, reason: { type: "string" },
   },
 });
 const [cmd, sub, ...rest] = positionals;
@@ -65,7 +66,7 @@ async function main() {
       if (!existsSync("evals/example.eval.json")) writeFileSync("evals/example.eval.json", JSON.stringify({
         name: "example-qa", dataset: { name: "example-qa", items: [{ input: { question: "What is the capital of France?" }, expected: "Paris" }, { input: { question: "What is 2 + 2?" }, expected: "4" }] },
         prompt: { name: "example-qa", model: "fast", template: [{ role: "system", content: "Answer in one word." }, { role: "user", content: "{{question}}" }] },
-        scorers: [{ type: "contains" }, { type: "latency", maxMs: 10000 }, { type: "llm_judge", model: "fast", rubric: "Is the answer correct and concise?", scale: [1, 5], passThreshold: 4 }], baseline: "latest",
+        scorers: [{ type: "contains" }, { type: "latency", maxMs: 10000 }, { type: "llm_judge", model: "smart", rubric: "Is the answer correct and concise?", scale: [1, 5], passThreshold: 4, runIf: "preflight_passed" }], baseline: "latest",
       }, null, 2));
       if (!existsSync(".env.example")) writeFileSync(".env.example", "ANTHROPIC_API_KEY=\nOPENAI_API_KEY=\nCRUCIBLE_HOME=.crucible\nCRUCIBLE_PORT=4800\n");
       console.log("created crucible.config.json, evals/example.eval.json, .env.example\nnext: crucible serve   |   crucible eval run evals/example.eval.json");
@@ -86,9 +87,21 @@ async function main() {
           console.log(`\n${report.eval.name}  [${report.eval.status}]  items=${report.summary.items} errors=${report.summary.errors} cost=${fmt.usd(report.summary.costUsd)} avgLatency=${fmt.ms(report.summary.avgLatencyMs)}`);
           console.log(table(Object.entries(report.summary.scores).map(([name, s]) => ({ scorer: name, mean: s.mean.toFixed(3), passRate: fmt.pct(s.passRate), n: s.n }))));
           if (report.eval.baselineEvalId) console.log(`\nvs baseline ${report.eval.baselineEvalId}: ${report.regressions} regressions, ${report.improvements} improvements`);
+          for (const w of report.warnings) console.log(`\nwarning: ${w}`);
           console.log(`\neval id: ${evalId}   ${report.passed ? "PASSED" : "FAILED"}`);
         }
         if (flags["fail-on-regression"] && (report.regressions > 0 || report.summary.errors > 0)) process.exit(1);
+        return;
+      }
+      if (sub === "calibrate") {
+        const ds = c.store.workbench.getDataset(c.project.id, rest[0] ?? die("dataset name required")) ?? die("dataset not found");
+        const judge = flags.judge ? JSON.parse(String(flags.judge)) : die("--judge '<llm_judge json>' required, e.g. --judge '{\"model\":\"fast\",\"rubric\":\"...\",\"scale\":[1,5],\"passThreshold\":4}'");
+        const report = await calibrateJudge({ store: c.store, gateway: c.gateway, projectId: c.project.id, datasetId: ds.id, judge: { type: "llm_judge", runIf: "always", scale: [0, 1], ...judge } });
+        if (flags.json) return out(report);
+        console.log(`n=${report.n}  agreement=${fmt.pct(report.agreement)}  kappa=${report.kappa.toFixed(2)}  TPR=${fmt.pct(report.truePositiveRate)}  TNR=${fmt.pct(report.trueNegativeRate)}  judge cost=${fmt.usd(report.judgeCostUsd)}`);
+        console.log(`confusion: tp=${report.confusion.tp} tn=${report.confusion.tn} fp=${report.confusion.fp} fn=${report.confusion.fn}`);
+        if (report.disagreements.length) { console.log("\ndisagreements:"); console.log(table(report.disagreements.map((d) => ({ item: d.itemId.slice(-8), human: d.human ? "pass" : "fail", judge: d.judge ? "pass" : "fail", score: d.score, judgeReason: d.reason ?? "", humanCritique: d.critique ?? "", output: d.output.slice(0, 60) })))); }
+        console.log("\nadvice:"); for (const a of report.advice) console.log(`- ${a}`);
         return;
       }
       if (sub === "list") return out(flags.json ? c.store.evals.list(c.project.id) : table(c.store.evals.list(c.project.id).map((e) => ({ id: e.id, name: e.name, status: e.status, created: fmt.ago(e.createdAt), passed: (e.summary as { passed?: boolean }).passed ?? "", regressions: (e.summary as { regressions?: number }).regressions ?? "" }))));

@@ -2,7 +2,9 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { Span, Trace } from "@crucible/core";
 import type { Env } from "../context.js";
+import { gunzipSync } from "node:zlib";
 import { ingestOtlp, type OtlpExportRequest } from "../otlp.js";
+import { decodeExportTraceServiceRequest } from "../otlp-proto.js";
 
 export const tracing = new Hono<Env>();
 
@@ -56,15 +58,28 @@ function resolveProject(store: Env["Variables"]["ctx"]["store"], idOrSlug?: stri
  * OTLP/HTTP JSON receiver (POST /v1/traces). Point any OpenTelemetry SDK at Crucible:
  *   OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://localhost:4800/v1/traces
  *   OTEL_EXPORTER_OTLP_PROTOCOL=http/json
- * Protobuf payloads are not accepted yet (415).
+ * Accepts application/json and application/x-protobuf (the default for most OTel SDKs), optionally gzip-encoded.
  */
 export const otlp = new Hono<Env>();
 otlp.post("/traces", async (c) => {
   const ct = c.req.header("content-type") ?? "";
-  if (ct.includes("protobuf")) return c.json({ error: { message: "OTLP protobuf is not supported yet; set OTEL_EXPORTER_OTLP_PROTOCOL=http/json", type: "unsupported_media_type" } }, 415);
-  const body = (await c.req.json()) as OtlpExportRequest;
+  const enc = c.req.header("content-encoding") ?? "";
+  let body: OtlpExportRequest;
+  const isProto = ct.includes("protobuf");
+  if (isProto || !ct.includes("json")) {
+    let raw = new Uint8Array(await c.req.arrayBuffer());
+    if (enc.includes("gzip")) raw = new Uint8Array(gunzipSync(raw));
+    if (isProto) {
+      try { body = decodeExportTraceServiceRequest(raw); } catch (err) { return c.json({ error: { message: `invalid OTLP protobuf: ${(err as Error).message}`, type: "bad_request" } }, 400); }
+    } else {
+      try { body = JSON.parse(new TextDecoder().decode(raw)) as OtlpExportRequest; } catch { return c.json({ error: { message: "body must be OTLP JSON or protobuf", type: "bad_request" } }, 400); }
+    }
+  } else {
+    body = (await c.req.json()) as OtlpExportRequest;
+  }
   const r = ingestOtlp(c.var.ctx.store, c.var.projectId, body);
   c.var.ctx.bus.publish(`traces:${c.var.projectId}`, r);
-  // OTLP success response is an empty ExportTraceServiceResponse.
+  // OTLP success is an empty ExportTraceServiceResponse; mirror the request encoding.
+  if (isProto) return c.body(new Uint8Array(0), 200, { "content-type": "application/x-protobuf", "x-crucible-spans": String(r.spans) });
   return c.json({ partialSuccess: {}, crucible: r });
 });
