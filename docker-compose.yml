@@ -6,6 +6,14 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       CRUCIBLE_ADMIN_TOKEN: ${CRUCIBLE_ADMIN_TOKEN:-}
+      # Uncomment to use the shared Postgres service below instead of SQLite in the volume.
+      # CRUCIBLE_DATABASE_URL: postgres://crucible:crucible@postgres:5432/crucible
     volumes: ["crucible-data:/data"]
+    depends_on: [postgres]
+  postgres:
+    image: postgres:16-alpine
+    environment: { POSTGRES_USER: crucible, POSTGRES_PASSWORD: crucible, POSTGRES_DB: crucible }
+    volumes: ["crucible-pg:/var/lib/postgresql/data"]
 volumes:
   crucible-data: {}
+  crucible-pg: {}

@@ -24,7 +24,7 @@ const HELP = `crucible <command> [subcommand] [options]
 
   trace list [--limit 20] [--search q] | trace show <traceId>
 
-  agent list | agent run <name> "<input>" | agent replay <runId> | agent fork <runId> <seq> [--patch '<json>'] [--model m]
+  agent list | agent run <name> "<input>" | agent replay <runId> | agent fork <runId> <seq> [--patch '<json>'] [--model m] [--match input|order]
   agent kill <runId> | agent diff <runA> <runB> | agent runs [--status s]
 
   rag create <kb> [--chunk 800] [--overlap 100] [--embedding model]
@@ -36,7 +36,7 @@ const HELP = `crucible <command> [subcommand] [options]
   ops approvals | ops approve <id> [--reason r] | ops reject <id> [--reason r] | ops audit | ops overview
 
 Global options: --project <slug> (default: default)   --json   --help
-Data lives in $CRUCIBLE_HOME (default ./.crucible). Provider keys come from .env / environment.`;
+Data lives in $CRUCIBLE_HOME (default ./.crucible) or in $CRUCIBLE_DATABASE_URL (postgres://… or pglite://…). Provider keys come from .env / environment.`;
 
 const { values: flags, positionals } = parseArgs({
   allowPositionals: true, strict: false,
@@ -44,7 +44,7 @@ const { values: flags, positionals } = parseArgs({
     project: { type: "string", default: "default" }, json: { type: "boolean", default: false }, help: { type: "boolean", default: false },
     port: { type: "string" }, host: { type: "string" }, "fail-on-regression": { type: "boolean", default: false }, concurrency: { type: "string" },
     limit: { type: "string" }, search: { type: "string" }, status: { type: "string" }, patch: { type: "string" }, model: { type: "string" },
-    chunk: { type: "string" }, overlap: { type: "string" }, embedding: { type: "string" }, k: { type: "string", short: "k" }, mode: { type: "string" }, reason: { type: "string" },
+    chunk: { type: "string" }, overlap: { type: "string" }, match: { type: "string" }, embedding: { type: "string" }, k: { type: "string", short: "k" }, mode: { type: "string" }, reason: { type: "string" },
   },
 });
 const [cmd, sub, ...rest] = positionals;
@@ -131,13 +131,13 @@ async function main() {
       const def = (name: string) => c.agents.get(name) ?? die(`agent not registered: ${name}. Registered: ${c.agents.list().map((a) => a.name).join(", ")}`);
       const tail = (runId: string) => { for (const e of c.store.agents.events(runId)) if (!flags.json) console.log(`  #${e.seq} ${e.type.padEnd(18)} ${JSON.stringify(e.payload).slice(0, 140)}`); };
       if (sub === "run") { const r = await c.runtime.run(def(rest[0] ?? die("agent name required")), { projectId: c.project.id, input: rest[1] ?? die("input required") }); tail(r.run.id); return out(flags.json ? r : `\nrun ${r.run.id} [${r.run.status}] cost=${fmt.usd(r.run.costUsd)}\n${r.output}`); }
-      if (sub === "replay") { const src = c.store.agents.getRun(rest[0] ?? die("run id")) ?? die("not found"); const r = await c.runtime.replay(def(src.agentName), src.id); tail(r.run.id); return out(flags.json ? r : `\nreplayed as ${r.run.id} [${r.run.status}]\n${r.output}`); }
+      if (sub === "replay") { const src = c.store.agents.getRun(rest[0] ?? die("run id")) ?? die("not found"); const r = await c.runtime.replay(def(src.agentName), src.id, { replayMatch: flags.match as never }); tail(r.run.id); return out(flags.json ? r : `\nreplayed as ${r.run.id} [${r.run.status}]\n${r.output}`); }
       if (sub === "fork") {
         const src = c.store.agents.getRun(rest[0] ?? die("run id")) ?? die("not found"); const seq = Number(rest[1] ?? die("seq required"));
         const d = def(src.agentName); const effective = flags.model ? { ...d, model: { ...d.model, model: String(flags.model) } } : d;
-        const r = await c.runtime.fork(effective, src.id, seq, { replaceEvent: flags.patch ? { seq, payload: JSON.parse(String(flags.patch)) } : undefined });
+        const r = await c.runtime.fork(effective, src.id, seq, { replaceEvent: flags.patch ? { seq, payload: JSON.parse(String(flags.patch)) } : undefined, replayMatch: flags.match as never });
         tail(r.run.id); const diff = diffRuns(c.store, src.id, r.run.id);
-        return out(flags.json ? { run: r, diff } : `\nforked as ${r.run.id} [${r.run.status}] diverged at #${diff.divergedAtSeq}\n${r.output}`);
+        const dv = (r.run.metadata as { divergedAtSeq?: number; divergenceReason?: string }); return out(flags.json ? { run: r, diff } : `\nforked as ${r.run.id} [${r.run.status}] diverged at #${diff.divergedAtSeq}${dv.divergedAtSeq !== undefined ? ` (cassette left at #${dv.divergedAtSeq}: ${dv.divergenceReason})` : ""}\n${r.output}`);
       }
       if (sub === "kill") { c.runtime.kill(rest[0] ?? die("run id"), "cli", flags.reason as string); return out("killed"); }
       if (sub === "diff") return out(diffRuns(c.store, rest[0] ?? die("run a"), rest[1] ?? die("run b")));

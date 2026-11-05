@@ -3,9 +3,9 @@ import { Store } from "./store.js";
 import { renderTemplate } from "./repos/workbench.js";
 import { estimateCost } from "./pricing.js";
 
-describe("Store", () => {
+describe.each([["sqlite", () => Store.memory()], ["postgres (pglite)", () => Store.pglite()]] as const)("Store on %s", (_name, open) => {
   it("manages prompts, versions and labels", () => {
-    const s = Store.memory();
+    const s = open();
     const p = s.workbench.ensureDefaultProject();
     const prompt = s.workbench.createPrompt(p.id, "greeter");
     const v1 = s.workbench.createVersion(prompt.id, { template: [{ role: "user", content: "Hi {{name}}" }], config: { model: "claude-haiku-5-5" }, labels: ["production"] });
@@ -22,7 +22,7 @@ describe("Store", () => {
   });
 
   it("records traces with spans and aggregates cost", () => {
-    const s = Store.memory();
+    const s = open();
     const p = s.workbench.ensureDefaultProject();
     const t = s.tracing.startTrace({ projectId: p.id, name: "chat" });
     const sp = s.tracing.startSpan({ traceId: t.id, name: "llm", kind: "llm", model: "claude-sonnet-5-5" });
@@ -37,7 +37,7 @@ describe("Store", () => {
   });
 
   it("forks agent runs at a sequence number with an overridden event", () => {
-    const s = Store.memory();
+    const s = open();
     const p = s.workbench.ensureDefaultProject();
     const run = s.agents.createRun({ projectId: p.id, agentName: "researcher" });
     s.agents.appendEvent(run.id, "run_started", {});
@@ -46,7 +46,7 @@ describe("Store", () => {
     s.agents.appendEvent(run.id, "llm_response", { text: "done" });
     const fork = s.agents.fork(run.id, 2, { replaceEvent: { seq: 2, payload: { result: "patched" } } });
     const evs = s.agents.events(fork.id);
-    expect(evs.map((e) => e.type)).toEqual(["run_started", "tool_call", "tool_result"]);
+    expect(evs.map((e: { type: string }) => e.type)).toEqual(["run_started", "tool_call", "tool_result"]);
     expect(evs[2]?.payload).toEqual({ result: "patched" });
     expect(fork.parentRunId).toBe(run.id);
     expect(s.agents.children(run.id)).toHaveLength(1);
@@ -54,7 +54,7 @@ describe("Store", () => {
   });
 
   it("enforces budgets from gateway spend", () => {
-    const s = Store.memory();
+    const s = open();
     const p = s.workbench.ensureDefaultProject();
     s.gateway.setBudget({ projectId: p.id, scope: "project", limitUsd: 1, period: "daily" });
     s.gateway.record({ projectId: p.id, apiKeyId: null, requestedModel: "m", servedModel: "m", provider: "x", route: "chat", status: 200, cached: false, fallbackDepth: 0, latencyMs: 10, usage: { inputTokens: 1, outputTokens: 1 }, costUsd: 0.6, traceId: null, error: null });
@@ -68,7 +68,7 @@ describe("Store", () => {
   });
 
   it("indexes chunks for keyword and vector search", () => {
-    const s = Store.memory();
+    const s = open();
     const p = s.workbench.ensureDefaultProject();
     const kb = s.rag.createKb({ projectId: p.id, name: "docs" });
     s.rag.upsertDocument({ knowledgeBaseId: kb.id, source: "a.md", title: "A", content: "x", chunks: [
@@ -84,7 +84,7 @@ describe("Store", () => {
   });
 
   it("handles approvals and audit", () => {
-    const s = Store.memory();
+    const s = open();
     const p = s.workbench.ensureDefaultProject();
     const run = s.agents.createRun({ projectId: p.id, agentName: "deployer" });
     const a = s.ops.requestApproval({ projectId: p.id, runId: run.id, eventSeq: 3, title: "Deploy to prod?" });

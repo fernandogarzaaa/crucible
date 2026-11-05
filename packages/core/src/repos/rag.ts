@@ -99,12 +99,20 @@ export class RagRepo {
 
   /** BM25 keyword search via FTS5. Returns chunk ids with normalized scores (higher is better). */
   keywordSearch(kbId: string, query: string, k: number): Array<{ chunkId: string; score: number }> {
+    if (this.db.dialect === "postgres") {
+      const terms = query.replace(/[^\p{L}\p{N}\s]/gu, " ").trim().split(/\s+/).filter(Boolean).join(" | ");
+      if (!terms) return [];
+      const rows = this.db.all<{ chunk_id: string; rank: number }>(
+        "SELECT chunk_id, ts_rank_cd(tsv, to_tsquery('english', ?)) AS rank FROM chunks_fts WHERE knowledge_base_id = ? AND tsv @@ to_tsquery('english', ?) ORDER BY rank DESC LIMIT ?", terms, kbId, terms, k,
+      );
+      return rows.map((r) => ({ chunkId: r.chunk_id, score: Number(r.rank) }));
+    }
     const safe = query.replace(/["*():^]/g, " ").trim().split(/\s+/).filter(Boolean).map((t) => `"${t}"`).join(" OR ");
     if (!safe) return [];
     const rows = this.db.all<{ chunk_id: string; rank: number }>(
       "SELECT chunk_id, bm25(chunks_fts) AS rank FROM chunks_fts WHERE knowledge_base_id = ? AND chunks_fts MATCH ? ORDER BY rank LIMIT ?", kbId, safe, k,
     );
-    return rows.map((r) => ({ chunkId: r.chunk_id, score: -r.rank }));
+    return rows.map((r) => ({ chunkId: r.chunk_id, score: -Number(r.rank) }));
   }
 
   /** Brute-force vector search. Fine up to ~100k chunks locally; swap for sqlite-vec / pgvector beyond that. */

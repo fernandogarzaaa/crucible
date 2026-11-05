@@ -6,13 +6,13 @@
 | --- | --- |
 | **Workbench** | Versioned prompts with labels (`support-reply@production`), datasets, a playground with side-by-side model comparison |
 | **Evals** | Assertion, similarity, JSON-schema, latency, cost and LLM-as-judge scorers. Declarative spec files for CI. Baseline comparison with per-item regression detection |
-| **Tracing** | Traces and spans aligned with the OpenTelemetry GenAI conventions (llm / tool / retriever / agent), waterfall view, cost and token accounting, a zero-dependency SDK |
-| **Agent debugger** | Every agent run is an ordered event log. **Replay** deterministically, **fork** from any step with a patched tool result or a different model, **diff** two runs, **kill** a runaway run |
+| **Tracing** | Traces and spans aligned with the OpenTelemetry GenAI conventions (llm / tool / retriever / agent), waterfall view, cost and token accounting, a zero-dependency SDK, and an OTLP/HTTP receiver so any OpenTelemetry SDK can export straight to Crucible |
+| **Agent debugger** | Every agent run is an ordered event log. **Replay** deterministically, **fork** from any step with a patched tool result or a different model, **diff** two runs, **kill** a runaway run. Recorded responses are matched by request input, so a fork after a prompt change replays only the unaffected prefix and reports where it diverged |
 | **Gateway** | OpenAI-compatible `/v1/chat/completions` and Anthropic-compatible `/v1/messages` in front of Anthropic, OpenAI, Ollama, Groq, OpenRouter. Routes with fallback / round-robin / cheapest / weighted strategies, response caching, PII redaction, per-key rate limits, hard-stop budgets, full request log |
 | **Knowledge (RAG)** | Chunking, embeddings, hybrid BM25 + vector retrieval with reciprocal rank fusion, optional LLM rerank, a query inspector, and retrieval evals (recall@k, MRR) |
 | **Operations** | Fleet health per agent, human-in-the-loop approvals for sensitive tools, alert rules, budgets, API keys, and an audit log of every operator action |
 
-Everything runs on Node 22+ with **zero native dependencies**: storage is SQLite via `node:sqlite`, the server is Hono, the UI is React. `pnpm install && pnpm build && pnpm dev` and you have the whole platform at `http://localhost:4800`.
+Everything runs on Node 22+ with **zero native dependencies**: storage is SQLite via `node:sqlite` by default, or Postgres for teams (`CRUCIBLE_DATABASE_URL=postgres://…`), the server is Hono, the UI is React. `pnpm install && pnpm build && pnpm dev` and you have the whole platform at `http://localhost:4800`.
 
 ## Quick start
 
@@ -96,6 +96,18 @@ export default (ctx) => [{
 
 Registered agents can be run, replayed and forked live from the UI and the CLI. Agents built with other frameworks can still push their event logs through `POST /api/projects/:p/runs/ingest` and get the same timeline, diff and event-level forking.
 
+## Sending OpenTelemetry traces
+
+Crucible accepts OTLP/HTTP JSON on `/v1/traces` and maps `gen_ai.*` attributes (operation name, model, provider, token usage, opt-in message content, tool arguments) onto its span model, storing the scope schema URL on each span so attribute renames across convention versions do not break history.
+
+```bash
+export OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://localhost:4800/v1/traces
+export OTEL_EXPORTER_OTLP_PROTOCOL=http/json
+export OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true   # content is opt-in in the OTel spec
+```
+
+Protobuf payloads are not accepted yet.
+
 ## Evals in CI
 
 `evals/example.eval.json` is a declarative spec: a dataset (inline or by name), a prompt (by reference or inline), scorers, and `"baseline": "latest"`. `crucible eval run spec.json --fail-on-regression` exits non-zero on errors or per-item regressions against the previous completed run. `.github/workflows/evals.yml` shows the CI wiring.
@@ -116,6 +128,7 @@ Clients send `model: "smart"`. Pin a provider with `anthropic/claude-haiku-5-5`.
 | Variable | Purpose |
 | --- | --- |
 | `CRUCIBLE_HOME` | Data directory (default `./.crucible`) |
+| `CRUCIBLE_DATABASE_URL` | `postgres://user:pass@host/db` for a shared team database, or `pglite://./dir` for embedded Postgres. Unset = SQLite in `CRUCIBLE_HOME` |
 | `CRUCIBLE_PORT`, `CRUCIBLE_HOST` | Server bind (default `127.0.0.1:4800`) |
 | `CRUCIBLE_ADMIN_TOKEN` | When set, every `/api` call needs this bearer token (or a project API key). Unset = trusted local mode |
 | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GROQ_API_KEY`, `OPENROUTER_API_KEY`, `OLLAMA_BASE_URL` | Providers to enable |
@@ -126,12 +139,12 @@ Clients send `model: "smart"`. Pin a provider with `anthropic/claude-haiku-5-5`.
 
 ## Open-core boundary (proposed)
 
-Everything in this repository is Apache-2.0. The intended paid tier layers on top without forking the core: SSO and RBAC, multi-tenant Postgres backend, managed cloud, long-term retention, SOC 2 controls, SLAs. The `Store` abstraction in `packages/core` is the seam: the Postgres implementation replaces one class.
+Everything in this repository is Apache-2.0, including the Postgres backend. The intended paid tier layers on top without forking the core: SSO and RBAC, multi-tenant management, managed cloud, long-term retention, SOC 2 controls, SLAs. The `Db` interface in `packages/core` is the seam: `SqliteDb` and `PostgresDb` implement the same synchronous surface, so every repository is backend-agnostic. The Postgres driver runs in a worker thread behind a synchronous bridge; the test suite runs every store and server test against both backends (Postgres via PGlite, in process).
 
 ## Development
 
 ```bash
-pnpm test          # vitest across all packages (25 tests, all offline)
+pnpm test          # vitest across all packages, each store/server test runs on SQLite and on embedded Postgres
 pnpm typecheck
 pnpm --filter @crucible/web dev     # Vite dev server on :4801 proxying to the API on :4800
 ```

@@ -52,7 +52,7 @@ export class AgentsRepo {
   appendEvent(runId: string, type: AgentEventType, payload: Json, spanId: string | null = null): AgentEvent {
     return this.db.transaction(() => {
       const last = this.db.get<{ s: number | null }>("SELECT MAX(seq) AS s FROM agent_events WHERE run_id = ?", runId);
-      const ev: AgentEvent = { id: newId.agentEvent(), runId, seq: (last?.s ?? -1) + 1, type, payload, spanId, ts: Date.now() };
+      const ev: AgentEvent = { id: newId.agentEvent(), runId, seq: Number(last?.s ?? -1) + 1, type, payload, spanId, ts: Date.now() };
       this.db.run("INSERT INTO agent_events (id, run_id, seq, type, payload, span_id, ts) VALUES (?, ?, ?, ?, ?, ?, ?)", ev.id, runId, ev.seq, type, j.enc(payload), spanId, ev.ts);
       this.db.run("UPDATE agent_runs SET event_count = event_count + 1 WHERE id = ?", runId);
       return ev;
@@ -90,7 +90,7 @@ export class AgentsRepo {
     return this.db
       .all(
         `SELECT agent_name, COUNT(*) AS runs,
-           SUM(status = 'running') AS running, SUM(status = 'failed') AS failed, SUM(status = 'awaiting_approval') AS awaiting,
+           SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) AS running, SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed, SUM(CASE WHEN status = 'awaiting_approval' THEN 1 ELSE 0 END) AS awaiting,
            SUM(cost_usd) AS cost, AVG(COALESCE(ended_at, ?) - started_at) AS avg_dur
          FROM agent_runs WHERE project_id = ? AND started_at >= ? GROUP BY agent_name ORDER BY runs DESC`,
         Date.now(), projectId, Date.now() - sinceMs,

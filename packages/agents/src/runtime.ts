@@ -1,8 +1,15 @@
+import { createHash } from "node:crypto";
 import type { AgentEvent, AgentEventType, ContentPart, Json, Message, Store } from "@crucible/core";
 import type { Gateway } from "@crucible/gateway";
 import type { AgentDefinition, AgentState, RunOptions, RunResult, Tool } from "./types.js";
 
 export class RunKilled extends Error { constructor(msg = "run killed") { super(msg); this.name = "RunKilled"; } }
+
+/** Stable hash of an LLM request: messages + tool names. Model and sampling params are excluded so a model override still matches. */
+export const requestHash = (messages: Message[], toolNames: string[]): string =>
+  createHash("sha256").update(JSON.stringify({ messages, tools: [...toolNames].sort() })).digest("hex").slice(0, 24);
+export const toolCallHash = (name: string, input: unknown): string =>
+  createHash("sha256").update(JSON.stringify({ name, input })).digest("hex").slice(0, 24);
 
 const textOf = (m: Message): string => (typeof m.content === "string" ? m.content : m.content.map((p) => (p.type === "text" ? p.text : "")).join(""));
 
@@ -19,12 +26,17 @@ export class AgentRuntime {
     const mode = opts.mode ?? "live";
     const cassette = mode !== "live" && opts.sourceRunId ? this.store.agents.events(opts.sourceRunId) : [];
     const cutoff = mode === "fork" ? (opts.forkAtSeq ?? Number.MAX_SAFE_INTEGER) : Number.MAX_SAFE_INTEGER;
+    const matchMode = opts.replayMatch ?? "input";
     let cursor = 0;
+    let cassetteLive = cassette.length > 0; // becomes false once we diverge (input mode) or run out
+    let divergedAtSeq: number | null = null;
+    const usedSeq = new Set<number>();
+    const patched = (ev: AgentEvent): Json => (opts.replaceEvent && opts.replaceEvent.seq === ev.seq ? opts.replaceEvent.payload : ev.payload);
 
     const trace = this.store.tracing.startTrace({ projectId: opts.projectId, name: `agent:${def.name}`, metadata: { mode, ...(opts.metadata ?? {}) }, tags: ["agent", def.name] });
     const run = this.store.agents.createRun({
       projectId: opts.projectId, agentName: def.name, traceId: trace.id,
-      metadata: { mode, ...(opts.metadata ?? {}) },
+      metadata: { mode, replayMatch: matchMode, ...(opts.metadata ?? {}) },
       parentRunId: mode === "live" ? null : (opts.sourceRunId ?? null), forkedAtSeq: mode === "fork" ? (opts.forkAtSeq ?? null) : null,
     });
     const emit = (type: AgentEventType, payload: Json, spanId: string | null = null): AgentEvent => {
@@ -32,15 +44,42 @@ export class AgentRuntime {
       opts.onEvent?.(ev);
       return ev;
     };
-    /** Take the next recorded event of a given type if we are still inside the cassette window. */
-    const recorded = (type: AgentEventType): AgentEvent | undefined => {
-      while (cursor < cassette.length && cassette[cursor]!.seq <= cutoff) {
-        const ev = cassette[cursor++]!;
-        if (ev.type === type) {
-          const payload = opts.replaceEvent && opts.replaceEvent.seq === ev.seq ? opts.replaceEvent.payload : ev.payload;
-          return { ...ev, payload };
+    const diverge = (atSeq: number, reason: string) => {
+      if (!cassetteLive) return;
+      cassetteLive = false;
+      divergedAtSeq = atSeq;
+      emit("checkpoint", { kind: "cassette_diverged", atSeq, reason });
+      this.store.db.run("UPDATE agent_runs SET metadata = ? WHERE id = ?", JSON.stringify({ ...this.store.agents.getRun(run.id)!.metadata, divergedAtSeq: atSeq, divergenceReason: reason }), run.id);
+    };
+    /**
+     * Take a recorded response of `type` if we are still replaying. In "order" mode the next recorded event
+     * of that type is used. In "input" mode the recorded request preceding the response must hash-match.
+     */
+    const recorded = (type: "llm_response" | "tool_result", hash: string): AgentEvent | undefined => {
+      if (!cassetteLive) return undefined;
+      const reqType = type === "llm_response" ? "llm_request" : "tool_call";
+      if (matchMode === "order") {
+        while (cursor < cassette.length && cassette[cursor]!.seq <= cutoff) {
+          const ev = cassette[cursor++]!;
+          if (ev.type === type) return { ...ev, payload: patched(ev) };
         }
+        diverge(cassette[Math.min(cursor, cassette.length - 1)]?.seq ?? 0, "cassette exhausted");
+        return undefined;
       }
+      // input mode: find the first unused request event with a matching hash inside the window, return its response.
+      for (let i = 0; i < cassette.length; i++) {
+        const req = cassette[i]!;
+        if (req.seq > cutoff) break;
+        if (req.type !== reqType || usedSeq.has(req.seq)) continue;
+        const h = (req.payload as { hash?: string } | null)?.hash;
+        if (h !== undefined && h !== hash) continue; // recordings made before hashing existed match by order
+        const resp = cassette.slice(i + 1).find((e) => e.type === type && e.seq <= cutoff && !usedSeq.has(e.seq));
+        if (!resp) break;
+        usedSeq.add(req.seq); usedSeq.add(resp.seq);
+        return { ...resp, payload: patched(resp) };
+      }
+      const nextReq = cassette.find((e) => e.type === reqType && !usedSeq.has(e.seq) && e.seq <= cutoff);
+      diverge(nextReq?.seq ?? (cassette[cassette.length - 1]?.seq ?? 0), nextReq ? `${reqType} input changed` : "cassette exhausted");
       return undefined;
     };
     const checkKilled = () => {
@@ -62,10 +101,11 @@ export class AgentRuntime {
         checkKilled();
         // ---- LLM turn
         const req = { messages: state.messages, config: { ...def.model, tools: toolDefs.length ? toolDefs : undefined } };
-        emit("llm_request", { step: state.step, messageCount: state.messages.length, model: def.model.model });
+        const reqHash = requestHash(state.messages, toolDefs.map((t) => t.name));
+        emit("llm_request", { step: state.step, messageCount: state.messages.length, model: def.model.model, hash: reqHash });
         const span = this.store.tracing.startSpan({ traceId: trace.id, name: `step ${state.step}: llm`, kind: "llm", model: def.model.model, input: state.messages.slice(-4) });
         let assistant: Message, usage, costUsd = 0, stopReason: string, servedModel = def.model.model, fromCassette = false;
-        const rec = recorded("llm_response");
+        const rec = recorded("llm_response", reqHash);
         if (rec) {
           const p = rec.payload as { message: Message; usage: typeof usage; costUsd: number; stopReason: string; model: string };
           assistant = p.message; usage = p.usage; costUsd = 0; stopReason = p.stopReason; servedModel = p.model; fromCassette = true;
@@ -95,10 +135,11 @@ export class AgentRuntime {
           checkKilled();
           const tool = tools.get(tu.name);
           const input = (tu.input ?? {}) as Record<string, Json>;
-          emit("tool_call", { id: tu.id, name: tu.name, input });
+          const callHash = toolCallHash(tu.name, input);
+          emit("tool_call", { id: tu.id, name: tu.name, input, hash: callHash });
           const tspan = this.store.tracing.startSpan({ traceId: trace.id, name: `tool: ${tu.name}`, kind: "tool", input });
           let content: string, isError = false;
-          const recResult = recorded("tool_result");
+          const recResult = recorded("tool_result", callHash);
           if (recResult) {
             const p = recResult.payload as { content: string; isError?: boolean };
             content = p.content; isError = !!p.isError;
@@ -123,7 +164,7 @@ export class AgentRuntime {
         emit("state_snapshot", { step: state.step, messageCount: state.messages.length, costUsd: state.costUsd });
         if (def.shouldContinue && !def.shouldContinue(state)) { output = textOf(assistant); break; }
       }
-      emit("run_finished", { output, steps: state.step, costUsd: state.costUsd });
+      emit("run_finished", { output, steps: state.step, costUsd: state.costUsd, divergedAtSeq });
       this.store.agents.setStatus(run.id, "completed");
       this.store.tracing.endTrace(trace.id, { output, metadata: { steps: state.step } });
     } catch (err) {

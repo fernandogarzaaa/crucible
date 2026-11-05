@@ -40,6 +40,15 @@ export interface RunOptions {
   forkAtSeq?: number;
   /** For fork: replace the payload of one recorded event (e.g. a tool result) before resuming. */
   replaceEvent?: { seq: number; payload: Json };
+  /**
+   * How recorded responses are matched during replay/fork.
+   *  - "input" (default): an LLM response is reused only when the request (messages + tools) hashes to the
+   *    same value as the recorded request; a tool result only when tool name + input match. On the first
+   *    mismatch the cassette is abandoned and execution goes live, and the run's metadata records
+   *    `divergedAtSeq`. This is what makes a fork after a prompt change meaningful.
+   *  - "order": reuse recorded responses strictly in sequence regardless of input (fastest; classic VCR).
+   */
+  replayMatch?: "input" | "order";
   /** How long to wait for a pending approval before failing the run. */
   approvalTimeoutMs?: number;
   signal?: AbortSignal;

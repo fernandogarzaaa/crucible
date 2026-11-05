@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { Span, Trace } from "@crucible/core";
 import type { Env } from "../context.js";
+import { ingestOtlp, type OtlpExportRequest } from "../otlp.js";
 
 export const tracing = new Hono<Env>();
 
@@ -50,3 +51,20 @@ function resolveProject(store: Env["Variables"]["ctx"]["store"], idOrSlug?: stri
   if (!idOrSlug) return undefined;
   return store.workbench.getProject(idOrSlug)?.id ?? store.workbench.createProject(idOrSlug).id;
 }
+
+/**
+ * OTLP/HTTP JSON receiver (POST /v1/traces). Point any OpenTelemetry SDK at Crucible:
+ *   OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://localhost:4800/v1/traces
+ *   OTEL_EXPORTER_OTLP_PROTOCOL=http/json
+ * Protobuf payloads are not accepted yet (415).
+ */
+export const otlp = new Hono<Env>();
+otlp.post("/traces", async (c) => {
+  const ct = c.req.header("content-type") ?? "";
+  if (ct.includes("protobuf")) return c.json({ error: { message: "OTLP protobuf is not supported yet; set OTEL_EXPORTER_OTLP_PROTOCOL=http/json", type: "unsupported_media_type" } }, 415);
+  const body = (await c.req.json()) as OtlpExportRequest;
+  const r = ingestOtlp(c.var.ctx.store, c.var.projectId, body);
+  c.var.ctx.bus.publish(`traces:${c.var.projectId}`, r);
+  // OTLP success response is an empty ExportTraceServiceResponse.
+  return c.json({ partialSuccess: {}, crucible: r });
+});

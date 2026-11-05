@@ -88,3 +88,28 @@ describe("AgentRuntime", () => {
     expect(store.ops.auditLog(project.id)[0]?.action).toBe("agent.kill");
   });
 });
+
+describe("input-matched replay", () => {
+  it("reuses recorded responses while inputs match and goes live at the first divergence", async () => {
+    const { store, project, rt, def, counters } = setup();
+    const live = await rt.run(def, { projectId: project.id, input: "weather?" });
+    // Same definition: full cassette hit, nothing executes.
+    const before = counters.lookups;
+    const replay = await rt.replay(def, live.run.id);
+    expect(replay.output).toBe(live.output);
+    expect(counters.lookups).toBe(before);
+    expect(store.agents.getRun(replay.run.id)!.metadata.divergedAtSeq).toBeUndefined();
+    // Changed system prompt: the first LLM request no longer matches, so everything runs live.
+    const changed = { ...def, system: "You are terse." };
+    const forked = await rt.fork(changed, live.run.id, 99);
+    const meta = store.agents.getRun(forked.run.id)!.metadata as { divergedAtSeq?: number; divergenceReason?: string };
+    expect(meta.divergedAtSeq).toBe(1);
+    expect(meta.divergenceReason).toContain("input changed");
+    expect(counters.lookups).toBe(before + 1);
+    expect(store.agents.events(forked.run.id).some((e) => e.type === "checkpoint")).toBe(true);
+    // Order mode ignores inputs entirely.
+    const ordered = await rt.fork(changed, live.run.id, 99, { replayMatch: "order" });
+    expect(counters.lookups).toBe(before + 1);
+    expect(ordered.output).toBe(live.output);
+  });
+});

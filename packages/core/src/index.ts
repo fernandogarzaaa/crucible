@@ -1,9 +1,11 @@
 export * from "./schema.js";
 export * from "./ids.js";
 export * from "./pricing.js";
-export { Db, j, bool, encodeEmbedding, decodeEmbedding } from "./db.js";
-export type { Row, SqlValue } from "./db.js";
-export { Store } from "./store.js";
+export { SqliteDb, SQLITE_MIGRATIONS, j, bool, encodeEmbedding, decodeEmbedding } from "./db.js";
+export type { Db, Dialect, Row, SqlValue } from "./db.js";
+export { PostgresDb, toPostgresSql } from "./pg/postgres-db.js";
+export { POSTGRES_MIGRATIONS } from "./pg/schema.js";
+export { Store, openDb } from "./store.js";
 export type { StoreOptions } from "./store.js";
 export { WorkbenchRepo, extractVariables, renderTemplate } from "./repos/workbench.js";
 export { TracingRepo } from "./repos/tracing.js";

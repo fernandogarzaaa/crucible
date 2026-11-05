@@ -118,8 +118,11 @@ export class TracingRepo {
   recordSpan(span: Span): void {
     this.db.transaction(() => {
       this.db.run(
-        `INSERT OR REPLACE INTO spans (id, trace_id, parent_span_id, name, kind, status, started_at, ended_at, input, output, attributes, model, provider, usage, cost_usd, error)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO spans (id, trace_id, parent_span_id, name, kind, status, started_at, ended_at, input, output, attributes, model, provider, usage, cost_usd, error)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET trace_id = excluded.trace_id, parent_span_id = excluded.parent_span_id, name = excluded.name, kind = excluded.kind, status = excluded.status,
+           started_at = excluded.started_at, ended_at = excluded.ended_at, input = excluded.input, output = excluded.output, attributes = excluded.attributes, model = excluded.model,
+           provider = excluded.provider, usage = excluded.usage, cost_usd = excluded.cost_usd, error = excluded.error`,
         span.id, span.traceId, span.parentSpanId, span.name, span.kind, span.status, span.startedAt, span.endedAt, j.enc(span.input), j.enc(span.output),
         j.enc(span.attributes), span.model ?? null, span.provider ?? null, j.enc(span.usage), span.costUsd ?? null, span.error ?? null,
       );
@@ -137,7 +140,7 @@ export class TracingRepo {
   }
 
   listSpans(traceId: string): Span[] {
-    return this.db.all("SELECT * FROM spans WHERE trace_id = ? ORDER BY started_at, rowid", traceId).map(rowSpan);
+    return this.db.all("SELECT * FROM spans WHERE trace_id = ? ORDER BY started_at, id", traceId).map(rowSpan);
   }
 
   deleteTrace(id: string): void {
@@ -149,11 +152,11 @@ export class TracingRepo {
       "SELECT status, cost_usd, total_tokens, (ended_at - started_at) AS dur FROM traces WHERE project_id = ? AND started_at >= ?",
       projectId, Date.now() - sinceMs,
     );
-    const durs = rows.map((r) => r.dur).filter((d): d is number => d != null).sort((a, b) => a - b);
+    const durs = rows.map((r) => (r.dur == null ? null : Number(r.dur))).filter((d): d is number => d != null).sort((a, b) => a - b);
     const pct = (p: number) => (durs.length ? durs[Math.min(durs.length - 1, Math.floor(p * durs.length))]! : 0);
     return {
       traces: rows.length, errors: rows.filter((r) => r.status === "error").length,
-      costUsd: rows.reduce((a, r) => a + r.cost_usd, 0), tokens: rows.reduce((a, r) => a + r.total_tokens, 0),
+      costUsd: rows.reduce((a, r) => a + Number(r.cost_usd), 0), tokens: rows.reduce((a, r) => a + Number(r.total_tokens), 0),
       p50Ms: pct(0.5), p95Ms: pct(0.95),
     };
   }

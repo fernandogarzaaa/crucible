@@ -9,7 +9,7 @@ import { Bus } from "./bus.js";
 import { AgentRegistry, demoAgents, loadUserAgents } from "./agents-registry.js";
 import type { AppContext, Env } from "./context.js";
 import { workbench } from "./routes/workbench.js";
-import { tracing } from "./routes/tracing.js";
+import { tracing, otlp } from "./routes/tracing.js";
 import { evals } from "./routes/evals.js";
 import { agents } from "./routes/agents.js";
 import { gatewayApi, compat } from "./routes/gateway.js";
@@ -106,5 +106,6 @@ export function createApp(ctx: AppContext, opts: { quiet?: boolean } = {}) {
   app.route("/api", rag);
   app.route("/api", ops);
   app.route("/v1", compat);
+  app.route("/v1", otlp);
   return app;
 }

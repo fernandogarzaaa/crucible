@@ -96,7 +96,7 @@ export class WorkbenchRepo {
     return this.db.transaction(() => {
       const last = this.db.get<{ v: number | null }>("SELECT MAX(version) AS v FROM prompt_versions WHERE prompt_id = ?", promptId);
       const v: PromptVersion = {
-        id: newId.promptVersion(), promptId, version: (last?.v ?? 0) + 1, template: input.template, config: input.config,
+        id: newId.promptVersion(), promptId, version: Number(last?.v ?? 0) + 1, template: input.template, config: input.config,
         variables: extractVariables(input.template), commitMessage: input.commitMessage, labels: input.labels ?? [], createdAt: Date.now(),
       };
       // Labels are unique per prompt (e.g. "production" moves to the new version).

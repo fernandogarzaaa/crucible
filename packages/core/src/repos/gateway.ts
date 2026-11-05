@@ -50,7 +50,7 @@ export class GatewayRepo {
   stats(projectId: string, sinceMs: number): { requests: number; errors: number; cached: number; costUsd: number; byModel: Array<{ model: string; provider: string; requests: number; costUsd: number; avgLatencyMs: number }> } {
     const since = Date.now() - sinceMs;
     const tot = this.db.get<{ n: number; e: number; c: number; cost: number }>(
-      "SELECT COUNT(*) n, SUM(status >= 400) e, SUM(cached) c, SUM(cost_usd) cost FROM gateway_requests WHERE project_id = ? AND created_at >= ?", projectId, since,
+      "SELECT COUNT(*) n, SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END) e, SUM(cached) c, SUM(cost_usd) cost FROM gateway_requests WHERE project_id = ? AND created_at >= ?", projectId, since,
     );
     const byModel = this.db
       .all("SELECT served_model m, provider p, COUNT(*) n, SUM(cost_usd) cost, AVG(latency_ms) lat FROM gateway_requests WHERE project_id = ? AND created_at >= ? GROUP BY served_model, provider ORDER BY n DESC", projectId, since)

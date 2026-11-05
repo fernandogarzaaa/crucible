@@ -11,7 +11,7 @@ export interface RunDiff {
 const sig = (e: AgentEvent) => JSON.stringify({ t: e.type, p: stripVolatile(e.payload) });
 function stripVolatile(p: unknown): unknown {
   if (!p || typeof p !== "object") return p;
-  const { usage: _u, costUsd: _c, replayed: _r, model: _m, mode: _mo, sourceRunId: _s, forkAtSeq: _f, ...rest } = p as Record<string, unknown>;
+  const { usage: _u, costUsd: _c, replayed: _r, model: _m, mode: _mo, sourceRunId: _s, forkAtSeq: _f, hash: _h, replayMatch: _rm, divergedAtSeq: _d, ...rest } = p as Record<string, unknown>;
   return rest;
 }
 const outputOf = (evs: AgentEvent[]) => (evs.find((e) => e.type === "run_finished")?.payload as { output?: string } | undefined)?.output ?? null;

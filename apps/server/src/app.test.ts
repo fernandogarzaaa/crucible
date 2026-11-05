@@ -3,7 +3,7 @@ import { Store } from "@crucible/core";
 import { MockProvider } from "@crucible/gateway";
 import { createApp, createContext } from "./app.js";
 
-function boot() {
+function boot(open: () => Store = () => Store.memory()) {
   const provider = new MockProvider({ reply: (req) => {
     const text = JSON.stringify(req.messages);
     if (text.includes("strict evaluator")) return '{"score": 1, "reason": "ok"}';
@@ -13,7 +13,7 @@ function boot() {
     if (text.includes("deploy") && text.includes("production")) return { toolUse: { name: "deploy", input: { service: "api", environment: "production" } } };
     return "echo";
   } });
-  const ctx = createContext({ store: Store.memory(), providers: [provider], registerDemoAgents: true, defaultModel: "mock-smart" });
+  const ctx = createContext({ store: open(), providers: [provider], registerDemoAgents: true, defaultModel: "mock-smart", loadUserAgents: false });
   const app = createApp(ctx, { quiet: true });
   const api = async (method: string, path: string, body?: unknown) => {
     const res = await app.request(path, { method, headers: { "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
@@ -23,9 +23,9 @@ function boot() {
   return { ctx, app, api };
 }
 
-describe("server", () => {
+describe.each([["sqlite", () => Store.memory()], ["postgres (pglite)", () => Store.pglite()]] as const)("server on %s", (_name, open) => {
   it("serves the whole platform over HTTP", async () => {
-    const { api } = boot();
+    const { api } = boot(open);
     expect((await api("GET", "/api/health")).body.ok).toBe(true);
 
     // Prompts + datasets + evals
@@ -99,7 +99,7 @@ describe("server", () => {
   });
 
   it("enforces API keys and project scoping", async () => {
-    const { api, app } = boot();
+    const { api, app } = boot(open);
     const other = await api("POST", "/api/projects", { name: "team-b" });
     const key = await api("POST", `/api/projects/${other.body.id}/keys`, { name: "svc" });
     const ok = await app.request("/v1/chat/completions", { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${key.body.secret}` }, body: JSON.stringify({ model: "mock-fast", messages: [{ role: "user", content: "hi" }] }) });

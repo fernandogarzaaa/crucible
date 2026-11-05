@@ -12,7 +12,7 @@ import { dirname } from "node:path";
 export type SqlValue = SQLInputValue;
 export type Row = Record<string, SqlValue>;
 
-const MIGRATIONS: string[] = [
+export const SQLITE_MIGRATIONS: string[] = [
   // 001: foundation
   `
   CREATE TABLE IF NOT EXISTS _migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL);
@@ -148,12 +148,28 @@ const MIGRATIONS: string[] = [
   `,
 ];
 
+export type Dialect = "sqlite" | "postgres";
+
+/**
+ * The synchronous SQL surface every repository is written against. Two implementations:
+ * `SqliteDb` (embedded, default) and `PostgresDb` (team/enterprise tier, see ./pg/postgres-db.ts).
+ */
+export interface Db {
+  readonly dialect: Dialect;
+  run(sql: string, ...params: SqlValue[]): { changes: number | bigint };
+  get<T = Row>(sql: string, ...params: SqlValue[]): T | undefined;
+  all<T = Row>(sql: string, ...params: SqlValue[]): T[];
+  transaction<T>(fn: () => T): T;
+  close(): void;
+}
+
 export interface DbOptions {
   /** File path or ":memory:". */
   path: string;
 }
 
-export class Db {
+export class SqliteDb implements Db {
+  readonly dialect: Dialect = "sqlite";
   readonly raw: DatabaseSync;
 
   constructor(opts: DbOptions) {
@@ -168,7 +184,7 @@ export class Db {
     const applied = new Set(
       (this.raw.prepare("SELECT version FROM _migrations").all() as Array<{ version: number }>).map((r) => r.version),
     );
-    MIGRATIONS.forEach((sql, i) => {
+    SQLITE_MIGRATIONS.forEach((sql, i) => {
       const version = i + 1;
       if (applied.has(version)) return;
       this.transaction(() => {
