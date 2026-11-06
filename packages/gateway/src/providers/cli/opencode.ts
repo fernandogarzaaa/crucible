@@ -61,7 +61,8 @@ export class OpenCodeProvider extends CliProvider {
       case "step_finish": {
         const t = e.part?.tokens ?? {};
         s.usage = {
-          inputTokens: s.usage.inputTokens + (t.input ?? 0), outputTokens: s.usage.outputTokens + (t.output ?? 0),
+          // Reasoning tokens are billed as output, so count them there (OpenCode reports them separately).
+          inputTokens: s.usage.inputTokens + (t.input ?? 0), outputTokens: s.usage.outputTokens + (t.output ?? 0) + (t.reasoning ?? 0),
           cacheReadTokens: (s.usage.cacheReadTokens ?? 0) + (t.cache?.read ?? 0), cacheWriteTokens: (s.usage.cacheWriteTokens ?? 0) + (t.cache?.write ?? 0),
         };
         s.stopReason = mapStop(e.part?.reason);

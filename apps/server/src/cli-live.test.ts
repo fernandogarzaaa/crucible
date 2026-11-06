@@ -72,3 +72,16 @@ describe.skipIf(!live || process.env.CRUCIBLE_LIVE_CLAUDE !== "1" || !which("cla
     expect(text.trim().toLowerCase()).toContain("pong");
   }, 180_000);
 });
+
+describe.skipIf(!live || !process.env.OPENROUTER_API_KEY || (!which("cline") && !which("opencode")))("live: free models via OpenRouter (needs OPENROUTER_API_KEY)", () => {
+  it("answers through a free OpenRouter model, falling back past rate-limited ones", async () => {
+    const { discoverOpenRouterFree } = await import("@crucible/gateway");
+    const free = (await discoverOpenRouterFree()).slice(0, 6);
+    expect(free.length).toBeGreaterThan(0);
+    const providers = [...(which("cline") ? [new ClineProvider({ timeoutMs: 120_000 })] : []), ...(which("opencode") ? [new OpenCodeProvider({ timeoutMs: 120_000 })] : [])];
+    const targets = providers.flatMap((p) => free.map((m) => ({ provider: p.name, model: `openrouter/${m}` })));
+    const gw = new Gateway({ providers, router: new Router(providers, { routes: [{ name: "free", strategy: "fallback", targets }] }) });
+    const res = await gw.chat(ask("free"), { projectId: "p" });
+    expect(String(res.message.content).toLowerCase()).toContain("pong");
+  }, 600_000);
+});

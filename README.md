@@ -197,7 +197,7 @@ CRUCIBLE_TEST_PG_URL=postgres://user@localhost:5432/crucible pnpm test   # also 
 
 The server suite includes conformance tests that drive Crucible with the unmodified official `@anthropic-ai/sdk` and `openai` clients: plain, streamed and tool-calling requests on Messages, Chat Completions and Responses, embeddings, model listing and error mapping.
 
-CLI providers are unit-tested against event streams recorded from the real CLIs, replayed by a fake binary. `CRUCIBLE_LIVE_CLI=1 pnpm test` also runs the installed Codex, OpenCode and Cline binaries end to end against an in-process Crucible server (no accounts needed), and `CRUCIBLE_LIVE_CLAUDE=1` adds a real call through your Claude Code login. Calls to the real Anthropic and OpenAI APIs are not part of the suite; run the gateway with `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` set to exercise them.
+CLI providers are unit-tested against event streams recorded from the real CLIs, replayed by a fake binary. `CRUCIBLE_LIVE_CLI=1 pnpm test` also runs the installed Codex, OpenCode and Cline binaries end to end against an in-process Crucible server (no accounts needed), `CRUCIBLE_LIVE_CLAUDE=1` adds a real call through your Claude Code login, and setting `OPENROUTER_API_KEY` adds a real free-model call through the fallback route. Calls to the real Anthropic and OpenAI APIs are not part of the suite; run the gateway with `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` set to exercise them.
 
 ```bash
 pnpm typecheck

@@ -111,6 +111,12 @@ describe("OpenCodeProvider (recorded real stream)", () => {
     expect(Date.now() - t0).toBeLessThan(5_000);
   });
 
+  it("counts reasoning tokens as output (recorded from an OpenRouter reasoning model)", async () => {
+    const res = await new OpenCodeProvider({ bin: FAKE, env: { FAKE_FIXTURE: fx("opencode-reasoning.jsonl") } }).chat(ask("openrouter/cohere/north-mini-code:free"));
+    expect(res.message.content).toBe("pong");
+    expect(res.usage).toMatchObject({ inputTokens: 10256, outputTokens: 48 });
+  });
+
   it("maps JSON error events", async () => {
     const err = await new OpenCodeProvider({ bin: FAKE, env: { FAKE_FIXTURE: fx("opencode-error.jsonl") } }).chat(ask("opencode/x")).catch((e) => e);
     expect(err.message).toContain("Proxy refused");
