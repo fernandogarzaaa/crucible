@@ -26,9 +26,9 @@
     "@crucible/evals": "workspace:*",
     "@crucible/gateway": "workspace:*",
     "@crucible/rag": "workspace:*",
-    "@hono/node-server": "^1.13.0",
+    "@hono/node-server": "^2.1.3",
     "hono": "^4.6.0",
-    "zod": "^3.24.0"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@anthropic-ai/sdk": "^1.6.0",
