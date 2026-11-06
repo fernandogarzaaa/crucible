@@ -1,0 +1,3 @@
+{"type":"step_start","timestamp":1793961274749,"sessionID":"x","part":{"id":"x","messageID":"x","sessionID":"x","type":"step-start"}}
+{"type":"text","timestamp":1793961274750,"sessionID":"x","part":{"id":"x","messageID":"x","sessionID":"x","type":"text","text":"(demo model) You said: \"Reply with exactly the word pong.\"","time":{"start":1793961274732,"end":1793961274736}}}
+{"type":"step_finish","timestamp":1793961274750,"sessionID":"x","part":{"id":"x","reason":"stop","messageID":"x","sessionID":"x","type":"step-finish","tokens":{"total":6327,"input":6312,"output":15,"reasoning":0,"cache":{"write":0,"read":0}},"cost":0}}

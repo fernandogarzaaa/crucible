@@ -1,0 +1,12 @@
+{
+  "name": "crucible-cli",
+  "version": "0.1.0",
+  "description": "Crucible command line: evals in CI, prompt management, agent replay/fork, RAG ingestion, gateway admin.",
+  "type": "module",
+  "bin": { "crucible": "./dist/index.js" },
+  "main": "./dist/index.js",
+  "scripts": { "build": "tsc -p tsconfig.json && chmod +x dist/index.js", "typecheck": "tsc -p tsconfig.json --noEmit", "test": "vitest run --passWithNoTests" },
+  "dependencies": {
+    "@crucible/agents": "workspace:*", "@crucible/core": "workspace:*", "@crucible/evals": "workspace:*", "@crucible/gateway": "workspace:*", "@crucible/rag": "workspace:*", "@crucible/server": "workspace:*"
+  }
+}

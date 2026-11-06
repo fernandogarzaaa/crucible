@@ -1,0 +1,49 @@
+import { useState } from "react";
+import { api, fmt } from "../lib/api";
+import { useFetch, useProject } from "../lib/hooks";
+import { Link, match, navigate, useRoute } from "../lib/router";
+import { Badge, Empty, Json, Tabs, confirmThen, toast } from "../components/ui";
+
+export function Knowledge() {
+  const project = useProject();
+  const { path } = useRoute();
+  const id = match("/knowledge/:id", path)?.id;
+  const { data, reload } = useFetch<any[]>(`/api/projects/${project}/kbs`);
+  const [name, setName] = useState(""); const [chunk, setChunk] = useState("800"); const [overlap, setOverlap] = useState("100"); const [emb, setEmb] = useState("local-hash-256");
+  return <>
+    <div className="head"><div><h1>Knowledge</h1><div className="sub">Ingest documents, inspect what retrieval returns, and measure recall before you change chunking or embeddings.</div></div></div>
+    <div className="split">
+      <div>
+        <div className="card" style={{ marginBottom: 10 }}><h2>New knowledge base</h2><div className="grid g2"><label>name<input value={name} onChange={(e) => setName(e.target.value)} /></label><label>embedding model<input value={emb} onChange={(e) => setEmb(e.target.value)} placeholder="local-hash-256 | text-embedding-3-small" /></label><label>chunk size<input value={chunk} onChange={(e) => setChunk(e.target.value)} /></label><label>overlap<input value={overlap} onChange={(e) => setOverlap(e.target.value)} /></label></div>
+          <button className="primary sm" style={{ marginTop: 8 }} disabled={!name} onClick={async () => { try { const kb = await api.post(`/api/projects/${project}/kbs`, { name, embeddingModel: emb, chunkSize: Number(chunk), chunkOverlap: Number(overlap) }); setName(""); reload(); navigate(`/knowledge/${kb.id}`); } catch (e) { toast((e as Error).message, true); } }}>Create</button></div>
+        <div className="card tight">{data?.length === 0 && <Empty>No knowledge bases.</Empty>}{data && data.length > 0 && <table><thead><tr><th>Name</th><th className="right">Docs</th><th className="right">Chunks</th><th>Embedding</th></tr></thead><tbody>{data.map((k) => <tr key={k.id} className={`click ${k.id === id ? "sel" : ""}`} onClick={() => navigate(`/knowledge/${k.id}`)}><td>{k.name}<div className="dim small">{k.chunkSize}/{k.chunkOverlap}</div></td><td className="right">{k.documentCount}</td><td className="right">{k.chunkCount}</td><td className="mono small">{k.embeddingModel}</td></tr>)}</tbody></table>}</div>
+      </div>
+      {id ? <KbDetail id={id} onChange={reload} /> : <div className="card muted">Select a knowledge base.</div>}
+    </div>
+  </>;
+}
+
+function KbDetail({ id, onChange }: { id: string; onChange: () => void }) {
+  const { data, reload } = useFetch<any>(`/api/kbs/${id}`, { deps: [id] });
+  const [tab, setTab] = useState<"query" | "docs" | "eval" | "add">("query");
+  const [q, setQ] = useState(""); const [k, setK] = useState("5"); const [mode, setMode] = useState("hybrid"); const [rerank, setRerank] = useState(""); const [hits, setHits] = useState<any>(null);
+  const [src, setSrc] = useState(""); const [content, setContent] = useState(""); const [dir, setDir] = useState("");
+  const [cases, setCases] = useState('[{"query": "…", "expectedSources": ["file.md"]}]'); const [report, setReport] = useState<any>(null);
+  if (!data) return <div className="card muted">Loading…</div>;
+  const query = async () => { try { setHits(await api.post(`/api/kbs/${id}/query`, { query: q, k: Number(k), mode, rerankModel: rerank || undefined, trace: true })); } catch (e) { toast((e as Error).message, true); } };
+  return <div className="card">
+    <div className="row" style={{ justifyContent: "space-between" }}><h3 style={{ margin: 0 }}>{data.name} <span className="muted small">· {data.documents.length} documents · {data.embeddingModel}</span></h3><button className="sm danger" onClick={() => confirmThen("Delete knowledge base and all documents?", () => api.del(`/api/kbs/${id}`).then(() => { onChange(); navigate("/knowledge"); }))}>delete</button></div>
+    <Tabs tabs={[["query", "Query inspector"], ["docs", `Documents (${data.documents.length})`], ["add", "Add content"], ["eval", "Retrieval eval"]]} value={tab} onChange={setTab} />
+    {tab === "query" && <>
+      <div className="row"><input style={{ flex: 1, minWidth: 240 }} value={q} onChange={(e) => setQ(e.target.value)} placeholder="ask something the documents answer" onKeyDown={(e) => e.key === "Enter" && q && query()} /><label>k<input value={k} onChange={(e) => setK(e.target.value)} style={{ width: 50 }} /></label><label>mode<select value={mode} onChange={(e) => setMode(e.target.value)}><option>hybrid</option><option>vector</option><option>keyword</option></select></label><label>rerank model<input value={rerank} onChange={(e) => setRerank(e.target.value)} placeholder="optional" style={{ width: 130 }} /></label><button className="primary" style={{ alignSelf: "end" }} disabled={!q} onClick={query}>Search</button></div>
+      {hits && <div style={{ marginTop: 10 }}><div className="row small muted">{hits.hits.length} hits · {fmt.ms(hits.latencyMs)}{hits.traceId && <> · <Link to={`/traces/${hits.traceId}`}>trace</Link></>}</div>
+        {hits.hits.map((h: any, i: number) => <div key={h.chunkId} className="msg" style={{ marginTop: 8 }}><div className="row small" style={{ justifyContent: "space-between" }}><span><strong>#{i + 1}</strong> <span className="mono">{h.source}</span> <span className="dim">chunk {h.index}</span></span><span className="pill-row"><Badge>fused {h.score.toFixed(4)}</Badge>{h.signals.vector !== undefined && <Badge kind="llm">vec {h.signals.vector.toFixed(3)}</Badge>}{h.signals.keyword !== undefined && <Badge kind="tool">bm25 {h.signals.keyword.toFixed(2)}</Badge>}{h.signals.rerank !== undefined && <Badge kind="ok">rerank {h.signals.rerank}</Badge>}</span></div><div className="small" style={{ whiteSpace: "pre-wrap", marginTop: 6 }}>{h.text}</div></div>)}
+        {hits.hits.length === 0 && <div className="muted small" style={{ marginTop: 8 }}>No results.</div>}</div>}
+    </>}
+    {tab === "docs" && <table><thead><tr><th>Source</th><th className="right">Chunks</th><th className="right">Added</th><th></th></tr></thead><tbody>{data.documents.map((d: any) => <tr key={d.id}><td>{d.title}<div className="dim small mono">{d.source}</div></td><td className="right">{d.chunkCount}</td><td className="right muted">{fmt.ago(d.createdAt)}</td><td><button className="sm danger" onClick={() => confirmThen(`Delete ${d.source}?`, () => api.del(`/api/documents/${d.id}`).then(() => { reload(); onChange(); }))}>×</button></td></tr>)}</tbody></table>}
+    {tab === "add" && <div className="grid g2"><div><h2>Paste a document</h2><label>source / title<input value={src} onChange={(e) => setSrc(e.target.value)} placeholder="handbook/budgets.md" /></label><label style={{ marginTop: 6 }}>content<textarea value={content} onChange={(e) => setContent(e.target.value)} style={{ minHeight: 160 }} /></label><button className="primary sm" style={{ marginTop: 6 }} disabled={!src || !content} onClick={async () => { try { const r = await api.post(`/api/kbs/${id}/documents`, [{ source: src, content }]); toast(`${r[0].changed ? "indexed" : "unchanged"} · ${r[0].chunks} chunks`); setContent(""); reload(); onChange(); } catch (e) { toast((e as Error).message, true); } }}>Ingest</button></div>
+      <div><h2>Ingest a local directory</h2><div className="muted small" style={{ marginBottom: 6 }}>Server-side path; .md .txt .html .json .rst files, recursive. Allowed from localhost in trusted mode.</div><input value={dir} onChange={(e) => setDir(e.target.value)} placeholder="/path/to/docs" style={{ width: "100%" }} /><button className="primary sm" style={{ marginTop: 6 }} disabled={!dir} onClick={async () => { try { const r = await api.post(`/api/kbs/${id}/ingest-dir`, { dir }); toast(`${r.documents} documents, ${r.chunks} chunks, ${r.skipped} unchanged`); reload(); onChange(); } catch (e) { toast((e as Error).message, true); } }}>Ingest directory</button></div></div>}
+    {tab === "eval" && <div><div className="muted small" style={{ marginBottom: 6 }}>Each case: a query plus <code>expectedSources</code> (document sources) and/or <code>expectedText</code> (substrings that must appear in a retrieved chunk).</div><textarea value={cases} onChange={(e) => setCases(e.target.value)} style={{ minHeight: 120 }} /><div className="row" style={{ marginTop: 6 }}><label>k<input value={k} onChange={(e) => setK(e.target.value)} style={{ width: 50 }} /></label><label>mode<select value={mode} onChange={(e) => setMode(e.target.value)}><option>hybrid</option><option>vector</option><option>keyword</option></select></label><button className="primary" style={{ alignSelf: "end" }} onClick={async () => { try { setReport(await api.post(`/api/kbs/${id}/evaluate`, { cases: JSON.parse(cases), k: Number(k), mode })); } catch (e) { toast((e as Error).message, true); } }}>Evaluate</button></div>
+      {report && <div style={{ marginTop: 10 }}><div className="grid g3"><div className="card stat"><div className="l">recall@{report.k}</div><div className="v">{fmt.pct(report.recallAtK)}</div></div><div className="card stat"><div className="l">MRR</div><div className="v">{report.mrr.toFixed(3)}</div></div><div className="card stat"><div className="l">hit rate</div><div className="v">{fmt.pct(report.hitRate)}</div></div></div><table style={{ marginTop: 10 }}><thead><tr><th>Query</th><th>Hit</th><th className="right">Rank</th><th>Retrieved</th></tr></thead><tbody>{report.perCase.map((c: any, i: number) => <tr key={i}><td>{c.query}</td><td><Badge kind={c.hit ? "ok" : "error"}>{c.hit ? "yes" : "no"}</Badge></td><td className="right">{c.rank ?? "-"}</td><td className="small mono">{c.retrieved.join(", ")}</td></tr>)}</tbody></table></div>}</div>}
+  </div>;
+}

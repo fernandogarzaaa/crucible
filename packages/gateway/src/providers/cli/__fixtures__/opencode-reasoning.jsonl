@@ -1,0 +1,3 @@
+{"type":"step_start","timestamp":1793963000000,"sessionID":"x","part":{"id":"x","messageID":"x","sessionID":"x","type":"step-start"}}
+{"type":"text","timestamp":1793963000001,"sessionID":"x","part":{"id":"t1","messageID":"x","sessionID":"x","type":"text","text":"pong"}}
+{"type":"step_finish","timestamp":1793963000002,"sessionID":"x","part":{"id":"x","reason":"stop","messageID":"x","sessionID":"x","type":"step-finish","tokens":{"total":10297,"input":10256,"output":0,"reasoning":48,"cache":{"write":0,"read":0}},"cost":0}}
