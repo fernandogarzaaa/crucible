@@ -27,6 +27,7 @@ export class AgentRuntime {
     const cassette = mode !== "live" && opts.sourceRunId ? this.store.agents.events(opts.sourceRunId) : [];
     const cutoff = mode === "fork" ? (opts.forkAtSeq ?? Number.MAX_SAFE_INTEGER) : Number.MAX_SAFE_INTEGER;
     const matchMode = opts.replayMatch ?? "input";
+    const boundaries = new Set(opts.replayBoundaries ?? ["llm", "tool"]);
     let cursor = 0;
     let cassetteLive = cassette.length > 0; // becomes false once we diverge (input mode) or run out
     let divergedAtSeq: number | null = null;
@@ -36,7 +37,7 @@ export class AgentRuntime {
     const trace = this.store.tracing.startTrace({ projectId: opts.projectId, name: `agent:${def.name}`, metadata: { mode, ...(opts.metadata ?? {}) }, tags: ["agent", def.name] });
     const run = this.store.agents.createRun({
       projectId: opts.projectId, agentName: def.name, traceId: trace.id,
-      metadata: { mode, replayMatch: matchMode, ...(opts.metadata ?? {}) },
+      metadata: { mode, replayMatch: matchMode, ...(mode !== "live" ? { replayBoundaries: [...boundaries] } : {}), ...(opts.metadata ?? {}) },
       parentRunId: mode === "live" ? null : (opts.sourceRunId ?? null), forkedAtSeq: mode === "fork" ? (opts.forkAtSeq ?? null) : null,
     });
     const emit = (type: AgentEventType, payload: Json, spanId: string | null = null): AgentEvent => {
@@ -57,6 +58,17 @@ export class AgentRuntime {
      */
     const recorded = (type: "llm_response" | "tool_result", hash: string): AgentEvent | undefined => {
       if (!cassetteLive) return undefined;
+      if (!boundaries.has(type === "llm_response" ? "llm" : "tool")) {
+        // This boundary runs live. Mark the matching recorded pair as consumed so later lookups stay aligned.
+        const reqType = type === "llm_response" ? "llm_request" : "tool_call";
+        if (matchMode === "order") {
+          while (cursor < cassette.length && cassette[cursor]!.seq <= cutoff) { if (cassette[cursor++]!.type === type) break; }
+        } else {
+          const i = cassette.findIndex((e) => e.type === reqType && !usedSeq.has(e.seq) && e.seq <= cutoff);
+          if (i >= 0) { usedSeq.add(cassette[i]!.seq); const r = cassette.slice(i + 1).find((e) => e.type === type && !usedSeq.has(e.seq)); if (r) usedSeq.add(r.seq); }
+        }
+        return undefined;
+      }
       const reqType = type === "llm_response" ? "llm_request" : "tool_call";
       if (matchMode === "order") {
         while (cursor < cassette.length && cassette[cursor]!.seq <= cutoff) {

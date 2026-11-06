@@ -113,3 +113,36 @@ describe("input-matched replay", () => {
     expect(ordered.output).toBe(live.output);
   });
 });
+
+describe("cut-point replay", () => {
+  it("replays LLM responses but runs tools live, so a tool-code change shows up", async () => {
+    const { store, project, rt, def, counters } = setup();
+    const live = await rt.run(def, { projectId: project.id, input: "weather?" });
+    const before = counters.lookups;
+    // New tool code: the agent's model decisions are replayed, the tool executes for real.
+    const changed = { ...def, tools: [{ ...def.tools![0]!, handler: () => "flooded" }] };
+    const cut = await rt.replay(changed, live.run.id, { replayBoundaries: ["llm"] });
+    const toolResult = store.agents.events(cut.run.id).find((e) => e.type === "tool_result")!;
+    expect((toolResult.payload as { content: string; replayed: boolean }).content).toBe("flooded");
+    expect((toolResult.payload as { replayed: boolean }).replayed).toBe(false);
+    // The second LLM request now carries a different tool result, so input matching sends it live
+    // and the run records where the recording stopped applying.
+    expect(store.agents.getRun(cut.run.id)!.metadata.divergedAtSeq).toBeDefined();
+    expect(cut.output).toBe("Result was: flooded");
+    // Stubbing every boundary would have replayed the old result and hidden the change.
+    const full = await rt.replay(changed, live.run.id);
+    expect(full.output).toBe(live.output);
+    expect(counters.lookups).toBe(before);
+  });
+
+  it("replays tool results but calls the model live", async () => {
+    const { store, project, rt, def, counters } = setup();
+    const live = await rt.run(def, { projectId: project.id, input: "weather?" });
+    const before = counters.lookups;
+    const r = await rt.replay(def, live.run.id, { replayBoundaries: ["tool"] });
+    expect(counters.lookups).toBe(before); // tool served from recording
+    const llm = store.agents.events(r.run.id).filter((e) => e.type === "llm_response");
+    expect(llm.every((e) => (e.payload as { replayed: boolean }).replayed === false)).toBe(true);
+    expect(r.output).toBe(live.output);
+  });
+});

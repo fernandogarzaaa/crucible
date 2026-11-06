@@ -25,8 +25,9 @@ const HELP = `crucible <command> [subcommand] [options]
 
   trace list [--limit 20] [--search q] | trace show <traceId>
 
-  agent list | agent run <name> "<input>" | agent replay <runId> | agent fork <runId> <seq> [--patch '<json>'] [--model m] [--match input|order]
+  agent list | agent run <name> "<input>" | agent replay <runId> | agent fork <runId> <seq> [--patch '<json>'] [--model m] [--match input|order] [--replay llm|tool|llm,tool]
   agent kill <runId> | agent diff <runA> <runB> | agent runs [--status s]
+    --replay llm   replays model decisions but runs tools live (catches tool-code regressions)
 
   rag create <kb> [--chunk 800] [--overlap 100] [--embedding model]
   rag ingest <kb> <dir> | rag query <kb> "<query>" [-k 5] [--mode hybrid|vector|keyword] | rag eval <kb> <cases.json>
@@ -45,7 +46,7 @@ const { values: flags, positionals } = parseArgs({
     project: { type: "string", default: "default" }, json: { type: "boolean", default: false }, help: { type: "boolean", default: false },
     port: { type: "string" }, host: { type: "string" }, "fail-on-regression": { type: "boolean", default: false }, concurrency: { type: "string" },
     limit: { type: "string" }, search: { type: "string" }, status: { type: "string" }, patch: { type: "string" }, model: { type: "string" },
-    chunk: { type: "string" }, overlap: { type: "string" }, match: { type: "string" }, judge: { type: "string" }, embedding: { type: "string" }, k: { type: "string", short: "k" }, mode: { type: "string" }, reason: { type: "string" },
+    chunk: { type: "string" }, overlap: { type: "string" }, match: { type: "string" }, judge: { type: "string" }, replay: { type: "string" }, embedding: { type: "string" }, k: { type: "string", short: "k" }, mode: { type: "string" }, reason: { type: "string" },
   },
 });
 const [cmd, sub, ...rest] = positionals;
@@ -141,14 +142,15 @@ async function main() {
       const c = ctx();
       if (sub === "list") return out(c.agents.list());
       if (sub === "runs") return out(flags.json ? c.store.agents.listRuns(c.project.id, { status: flags.status as never }) : table(c.store.agents.listRuns(c.project.id, { status: flags.status as never }).map((r) => ({ id: r.id, agent: r.agentName, status: r.status, events: r.eventCount, cost: fmt.usd(r.costUsd), parent: r.parentRunId ?? "", when: fmt.ago(r.startedAt) }))));
+      const replayB = () => (flags.replay ? (String(flags.replay).split(",").map((x) => x.trim()).filter((x) => x === "llm" || x === "tool") as Array<"llm" | "tool">) : undefined);
       const def = (name: string) => c.agents.get(name) ?? die(`agent not registered: ${name}. Registered: ${c.agents.list().map((a) => a.name).join(", ")}`);
       const tail = (runId: string) => { for (const e of c.store.agents.events(runId)) if (!flags.json) console.log(`  #${e.seq} ${e.type.padEnd(18)} ${JSON.stringify(e.payload).slice(0, 140)}`); };
       if (sub === "run") { const r = await c.runtime.run(def(rest[0] ?? die("agent name required")), { projectId: c.project.id, input: rest[1] ?? die("input required") }); tail(r.run.id); return out(flags.json ? r : `\nrun ${r.run.id} [${r.run.status}] cost=${fmt.usd(r.run.costUsd)}\n${r.output}`); }
-      if (sub === "replay") { const src = c.store.agents.getRun(rest[0] ?? die("run id")) ?? die("not found"); const r = await c.runtime.replay(def(src.agentName), src.id, { replayMatch: flags.match as never }); tail(r.run.id); return out(flags.json ? r : `\nreplayed as ${r.run.id} [${r.run.status}]\n${r.output}`); }
+      if (sub === "replay") { const src = c.store.agents.getRun(rest[0] ?? die("run id")) ?? die("not found"); const r = await c.runtime.replay(def(src.agentName), src.id, { replayMatch: flags.match as never, replayBoundaries: replayB() }); tail(r.run.id); return out(flags.json ? r : `\nreplayed as ${r.run.id} [${r.run.status}]\n${r.output}`); }
       if (sub === "fork") {
         const src = c.store.agents.getRun(rest[0] ?? die("run id")) ?? die("not found"); const seq = Number(rest[1] ?? die("seq required"));
         const d = def(src.agentName); const effective = flags.model ? { ...d, model: { ...d.model, model: String(flags.model) } } : d;
-        const r = await c.runtime.fork(effective, src.id, seq, { replaceEvent: flags.patch ? { seq, payload: JSON.parse(String(flags.patch)) } : undefined, replayMatch: flags.match as never });
+        const r = await c.runtime.fork(effective, src.id, seq, { replaceEvent: flags.patch ? { seq, payload: JSON.parse(String(flags.patch)) } : undefined, replayMatch: flags.match as never, replayBoundaries: replayB() });
         tail(r.run.id); const diff = diffRuns(c.store, src.id, r.run.id);
         const dv = (r.run.metadata as { divergedAtSeq?: number; divergenceReason?: string }); return out(flags.json ? { run: r, diff } : `\nforked as ${r.run.id} [${r.run.status}] diverged at #${diff.divergedAtSeq}${dv.divergedAtSeq !== undefined ? ` (cassette left at #${dv.divergedAtSeq}: ${dv.divergenceReason})` : ""}\n${r.output}`);
       }

@@ -49,6 +49,15 @@ export interface RunOptions {
    *  - "order": reuse recorded responses strictly in sequence regardless of input (fastest; classic VCR).
    */
   replayMatch?: "input" | "order";
+  /**
+   * Which recorded boundaries are served from the recording during replay/fork. Default both.
+   *  - ["llm"]: replay model responses but execute tools live with the current code ("cut-point replay").
+   *    This is the mode that catches regressions in tool code and tool guards: stubbing every boundary
+   *    would replay the old tool result and hide the change.
+   *  - ["tool"]: replay tool results but call the model live (test a prompt or model change against
+   *    a frozen environment).
+   */
+  replayBoundaries?: Array<"llm" | "tool">;
   /** How long to wait for a pending approval before failing the run. */
   approvalTimeoutMs?: number;
   signal?: AbortSignal;

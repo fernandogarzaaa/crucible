@@ -53,7 +53,7 @@ agents.post("/runs/:id/fork", async (c) => {
   const s = c.var.ctx.store;
   const src = s.agents.getRun(c.req.param("id"));
   if (!src) return c.json({ error: "not found" }, 404);
-  const body = z.object({ atSeq: z.number().int().nonnegative(), replaceEvent: z.object({ seq: z.number().int(), payload: z.unknown().transform((v) => v ?? null) }).optional(), model: z.string().optional(), live: z.boolean().default(true), replayMatch: z.enum(["input", "order"]).optional() }).parse(await c.req.json());
+  const body = z.object({ atSeq: z.number().int().nonnegative(), replaceEvent: z.object({ seq: z.number().int(), payload: z.unknown().transform((v) => v ?? null) }).optional(), model: z.string().optional(), live: z.boolean().default(true), replayMatch: z.enum(["input", "order"]).optional(), replayBoundaries: z.array(z.enum(["llm", "tool"])).min(1).optional() }).parse(await c.req.json());
   const def = c.var.ctx.agents.get(src.agentName);
   if (!body.live || !def) {
     const fork = s.agents.fork(src.id, body.atSeq, { replaceEvent: body.replaceEvent });
@@ -63,7 +63,7 @@ agents.post("/runs/:id/fork", async (c) => {
   const effectiveDef = body.model ? { ...def, model: { ...def.model, model: body.model } } : def;
   const runId = await new Promise<string>((resolve) => {
     void ctx.runtime.fork(effectiveDef, src.id, body.atSeq, {
-      replaceEvent: body.replaceEvent, replayMatch: body.replayMatch, metadata: { forkedBy: c.var.actor, modelOverride: body.model ?? null },
+      replaceEvent: body.replaceEvent, replayMatch: body.replayMatch, replayBoundaries: body.replayBoundaries, metadata: { forkedBy: c.var.actor, modelOverride: body.model ?? null },
       onEvent: (ev) => { if (ev.type === "run_started") resolve(ev.runId); ctx.bus.publish(`run:${ev.runId}`, ev); ctx.bus.publish(`runs:${src.projectId}`, ev); },
     }).catch((err: Error) => ctx.bus.publish(`runs:${src.projectId}`, { type: "error", message: err.message }));
   });
@@ -72,6 +72,7 @@ agents.post("/runs/:id/fork", async (c) => {
 });
 
 agents.post("/runs/:id/replay", async (c) => {
+  const opts = z.object({ replayMatch: z.enum(["input", "order"]).optional(), replayBoundaries: z.array(z.enum(["llm", "tool"])).min(1).optional() }).parse(await c.req.json().catch(() => ({})));
   const s = c.var.ctx.store;
   const src = s.agents.getRun(c.req.param("id"));
   if (!src) return c.json({ error: "not found" }, 404);
@@ -79,7 +80,7 @@ agents.post("/runs/:id/replay", async (c) => {
   if (!def) return c.json({ error: "agent not registered; only registered agents can be replayed live" }, 409);
   const ctx = c.var.ctx;
   const runId = await new Promise<string>((resolve) => {
-    void ctx.runtime.replay(def, src.id, { onEvent: (ev) => { if (ev.type === "run_started") resolve(ev.runId); ctx.bus.publish(`run:${ev.runId}`, ev); } }).catch(() => undefined);
+    void ctx.runtime.replay(def, src.id, { ...opts, onEvent: (ev) => { if (ev.type === "run_started") resolve(ev.runId); ctx.bus.publish(`run:${ev.runId}`, ev); } }).catch(() => undefined);
   });
   return c.json({ runId }, 202);
 });

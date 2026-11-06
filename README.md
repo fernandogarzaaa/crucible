@@ -7,7 +7,7 @@
 | **Workbench** | Versioned prompts with labels (`support-reply@production`), datasets, a playground with side-by-side model comparison |
 | **Evals** | Assertion, similarity, JSON-schema, latency, cost and LLM-as-judge scorers. Declarative spec files for CI. Baseline comparison with per-item regression detection. Judges can be gated on deterministic preflight checks, and `crucible eval calibrate` measures a judge against human labels (agreement, true-positive/negative rates, Cohen's kappa, disagreements) |
 | **Tracing** | Traces and spans aligned with the OpenTelemetry GenAI conventions (llm / tool / retriever / agent), waterfall view, cost and token accounting, a zero-dependency SDK, and an OTLP/HTTP receiver so any OpenTelemetry SDK can export straight to Crucible |
-| **Agent debugger** | Every agent run is an ordered event log. **Replay** deterministically, **fork** from any step with a patched tool result or a different model, **diff** two runs, **kill** a runaway run. Recorded responses are matched by request input, so a fork after a prompt change replays only the unaffected prefix and reports where it diverged |
+| **Agent debugger** | Every agent run is an ordered event log. **Replay** deterministically, **fork** from any step with a patched tool result or a different model, **diff** two runs, **kill** a runaway run. Recorded responses are matched by request input, so a fork after a prompt change replays only the unaffected prefix and reports where it diverged. Cut-point replay serves only model responses from the recording and runs tools live with current code, which catches tool regressions that full stubbing hides |
 | **Gateway** | OpenAI-compatible `/v1/chat/completions` and Anthropic-compatible `/v1/messages` in front of Anthropic, OpenAI, Ollama, Groq, OpenRouter. Routes with fallback / round-robin / cheapest / weighted strategies, response caching, PII redaction, per-key rate limits, hard-stop budgets, full request log |
 | **Knowledge (RAG)** | Chunking, embeddings, hybrid BM25 + vector retrieval with reciprocal rank fusion, optional LLM rerank, a query inspector, and retrieval evals (recall@k, MRR) |
 | **Operations** | Fleet health per agent, human-in-the-loop approvals for sensitive tools, alert rules, budgets, API keys, and an audit log of every operator action |
@@ -38,6 +38,7 @@ curl localhost:4800/v1/chat/completions -H 'content-type: application/json' \
 node apps/cli/dist/index.js agent run researcher "What does a hard-stop budget do?"
 node apps/cli/dist/index.js agent runs
 node apps/cli/dist/index.js agent fork <runId> 4 --patch '{"content":"a different tool result"}'
+node apps/cli/dist/index.js agent replay <runId> --replay llm    # replay model decisions, run tools live
 ```
 
 `pnpm link --global apps/cli` (or `npm i -g ./apps/cli` after publishing) gives you a global `crucible` command.

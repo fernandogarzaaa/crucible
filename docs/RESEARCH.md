@@ -97,12 +97,50 @@
 - "Phoenix had 2M+ monthly downloads as of February 2025." Vendor figure, internally inconsistent across Arize posts, and current registry data is far lower; also, Phoenix is Elastic License, not plain OSS.
 - "langgraph-replay shows local-first SQLite agent recording is an established pattern." It is one tiny package; it demonstrates a technique, not an established pattern.
 
+## Follow-up run (2026-11-06)
+
+*A second research run targeted the gaps above: 23 sources fetched, 108 claims extracted, 25 put through three-vote verification (22 confirmed, 3 refuted). Market sizing and OTel adoption claims were fetched but none reached the verification budget, so they appear below as leads only.*
+
+### Verified
+
+**Competitors, pricing and openness** *(pages fetched 2026-11-05/06; pricing changes often)*
+
+| Product | Open source | Self-hosting | Hosted pricing | Notes |
+| --- | --- | --- | --- | --- |
+| LangSmith | No license claim | Enterprise add-on only | Developer $0, Plus $39/seat (re-check before quoting; a detailed tier claim was refuted 1-2) | Cloud-first, US or EU |
+| Braintrust | SDKs, autoevals, proxy, Terraform only. UI, API and Brainstore are closed | Data plane only, control plane stays hosted. Closed to new customers from 2026-11-04 | Starter $0; Pro $249/mo; Enterprise custom. Billed per GB processed plus per score | Moving away from customer-controlled deployment |
+| Portkey | Gateway is MIT (~13k stars) | Gateway only: routing, retries, fallbacks, guardrails, basic dashboard | Developer free (10k logs, "not suitable for production"); Production $49/mo for 100k logs | Acquired by Palo Alto Networks, closed 2026-05-29 (~$117-140M per SEC filings); now Prisma AIRS AI Gateway |
+| LiteLLM | MIT gateway with virtual keys, budgets, rate limits, spend tracking, admin UI, guardrails and an MCP gateway | Same image; Enterprise is a license key | Not published | Enterprise adds SSO beyond 5 users, SCIM, audit logs, org admins, secret managers, IP allowlists |
+| Opik (Comet) | Apache-2.0, same codebase as hosted | Docker Compose or Helm, unlimited spans | Free (25k spans); Pro $19/mo flat (100k spans); Enterprise custom | Auth, RBAC and SSO are Enterprise-only; an open GitHub issue asks how to secure self-hosted |
+| W&B Weave | Not stated | Enterprise only; self-managed in private preview | Now sold under CoreWeave Forge (launched 2026-09-30): Free 1 GB/mo; Pro from $60/mo, then $0.10/MB | Pro limited to teams under 50 employees |
+
+**Replay in production tools.**
+- **Laminar** is the closest shipped equivalent of Crucible's replay. A rerun against a recorded trace serves cached LLM responses keyed by trace ID plus a hash of the span input, until the first cache miss or a chosen boundary, then continues live. Limits: LLM responses only (no tool stubs), a fixed set of SDKs, and the cache lives in Laminar's backend.
+- **Temporal** (OpenAI Agents SDK integration) records model calls as Activities so they are not re-run on Workflow replay. This is durability, not a debugging workflow. Function tools are replay-safe only when wrapped as Activities. A claim that Temporal has no debugging or forking features was refuted 0-3, so treat that as unknown rather than absent.
+
+**Tool combinations.** Promptfoo resolves Langfuse-managed prompts natively (`langfuse://name@label`). Langfuse's own migration guide says teams leave Promptfoo because eval results live apart from production traces, and that Promptfoo's red-teaming has no Langfuse equivalent. This is vendor positioning, not adoption data. *(medium confidence)*
+
+### Extracted, not verified (leads)
+
+- **Market and funding.** A funding tracker (Bot Memo) counts $6.02B raised by "AI in production" software startups in January-September 2026, against $1.70B for all of 2025, with inference platforms taking 92 percent. Evaluation and observability raised $272M (Braintrust $80M, Patronus $50M, Judgment Labs $32M, Fiddler $30M, Coval $28M and smaller rounds). Gateways raised $129M (OpenRouter $113M Series B, Portkey $15M Series A).
+- **Acquisitions.** Dynatrace agreeing to acquire Arize for a reported $915M (August 2026); Cisco acquiring Galileo into Splunk (announced April 2026, price undisclosed); Humanloop's team joining Anthropic with the platform shut down (August 2025); Helicone to Mintlify (March 2026). Only the Portkey deal is verified here.
+- **Buyers.** Futurum's 2H 2026 survey (839 decision makers): 64 percent plan to raise observability spend but only 19 percent by more than 15 percent; 75 percent had a production incident involving AI code, agents or tools; only 32 percent cap spend per agent or session and only 12 percent evaluate agent work before promotion. Futurum expects buyers to judge AI observability on "cost per accepted result" by end of 2027.
+- **Standards.** The `semantic-conventions-genai` repository still had no releases or tags on 2026-11-05. Datadog supports the GenAI conventions natively; Langfuse accepts them over OTLP; Phoenix's native schema remains OpenInference; OpenLLMetry still emits the deprecated `gen_ai.prompt`/`gen_ai.completion`. An OTel Collector `gen_ai_normalizer` processor converts OpenInference and OpenLLMetry shapes to the official conventions. LiteLLM's OTel v2 exporter emits `gen_ai.*` spans (including MCP `execute_tool` spans with `mcp.method.name`) but is opt-in via `LITELLM_OTEL_V2=true`.
+- **Stitched-stack friction.** Langfuse Cloud retires the SDK v2 ingestion route on 2026-11-16, breaking LiteLLM's native Langfuse callback (pinned below v3) and pushing that stack onto OTLP. The LiteLLM-to-Langfuse pipeline has four bounded queues that drop rather than block, so traces are best-effort, not an audit log. Practitioner reports describe LiteLLM memory growth under high concurrency, key rotation not taking effect on config reload, default retries that multiply spend, and fallbacks that are sequential rather than cost-sorted. A July 2026 benchmark measured 257.7 ms of added p99 latency for LiteLLM's Python proxy.
+- **Replay research.** Chronicle (arXiv 2609.20625, September 2026) introduces "cut-point replay": serve a chosen subset of boundaries from the recording and run the rest live against new code, turning a recorded incident into a CI regression test. In its mutation study, cut-point tests caught every mutant that let a recorded unsafe action through, while stubbing every boundary caught none. Chronicle matches boundaries by name and call count, not by input.
+
+### What changed in Crucible as a result
+
+- **Cut-point replay** (`replayBoundaries`): replay and fork can now serve only model responses from the recording and execute tools live with the current code, or the reverse. This is the mode that catches tool-guard regressions, per Chronicle's mutation result. Crucible combines it with input-matched stubbing, which neither Laminar (LLM only) nor Chronicle (order-matched) does. Exposed as `--replay llm|tool` on the CLI, `replayBoundaries` on the fork and replay APIs, and a "Replay, tools live" action on the run page.
+- **Positioning check.** Every verified competitor gates SSO, RBAC or audit logs behind Enterprise, and two of six (Braintrust, Weave) are restricting self-hosting. Crucible's audit log, approvals and Postgres backend are in the open core; SSO and RBAC remain the natural paid boundary.
+
 ## Open questions for a follow-up run
 
-1. Current pricing, licensing and documented complaints for LangSmith, Braintrust, Helicone, LiteLLM, Portkey, OpenRouter, W&B Weave, Humanloop, AgentOps, Laminar and Opik from primary sources.
-2. Whether Inspect AI, AgentOps, Laminar or LangSmith offer input-matched deterministic replay or regression suites from recorded runs.
-3. A credible 2025-2026 market-size estimate and the full funding and M&A picture.
-4. Actual adoption of the OTel GenAI conventions and MCP across instrumentation libraries and gateways, and the expected date of the first tagged `semantic-conventions-genai` release.
+1. Verified pricing and openness for Helicone, OpenRouter, AgentOps, Phoenix, Bifrost/Maxim, Dash0 and Traceloop (the follow-up run covered LangSmith, Braintrust, Portkey, LiteLLM, Opik and Weave).
+2. Whether Inspect AI, AgentOps, LangSmith, Braintrust, Restate, DBOS or Inngest stub tool calls during replay or build regression suites from recorded runs, and what Temporal offers for debugging.
+3. A named analyst market-size estimate with methodology, and verification of the Arize, Galileo and funding-tracker figures listed as leads above.
+4. Verified adoption of the OTel GenAI conventions by version across OpenLLMetry, OpenInference, Vercel AI SDK, Logfire and New Relic.
+5. Independent evidence (surveys, issues, forum threads) of which tool combinations teams actually run, beyond vendor migration guides.
 
 ## Sources
 
