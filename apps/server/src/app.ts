@@ -3,6 +3,7 @@ import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 import { Store } from "@crucible/core";
 import { Gateway, MemoryCache, Router, RouterConfig, providersFromEnv, type Provider } from "@crucible/gateway";
+import { refreshFreeModels } from "./free-models.js";
 import { AgentRuntime } from "@crucible/agents";
 import { RagPipeline } from "@crucible/rag";
 import { Bus } from "./bus.js";
@@ -12,6 +13,7 @@ import { workbench } from "./routes/workbench.js";
 import { tracing, otlp } from "./routes/tracing.js";
 import { evals } from "./routes/evals.js";
 import { agents } from "./routes/agents.js";
+export { refreshFreeModels } from "./free-models.js";
 import { gatewayApi, compat } from "./routes/gateway.js";
 import { rag } from "./routes/rag.js";
 import { ops } from "./routes/ops.js";
@@ -23,6 +25,8 @@ export interface CreateAppOptions {
   quiet?: boolean;
   registerDemoAgents?: boolean;
   defaultModel?: string;
+  /** Discover free models (OpenCode Zen, OpenRouter) at startup and keep the `free` route current. Default on. */
+  discoverFreeModels?: boolean;
   /** Load `crucible.agents.mjs` (or $CRUCIBLE_AGENTS) from the working directory. */
   loadUserAgents?: boolean;
 }
@@ -32,13 +36,17 @@ export function createContext(opts: CreateAppOptions = {}): AppContext {
   const providers = opts.providers ?? providersFromEnv();
   const savedRoutes = store.ops.kvGet<RouterConfig | null>("gateway.routes", null);
   const router = new Router(providers, savedRoutes ? RouterConfig.parse(savedRoutes) : defaultRoutes(providers));
+  const freeRouteAuto = !savedRoutes?.routes?.some((r) => r.name === "free");
   const gateway = new Gateway({ providers, router, store, cache: new MemoryCache(), defaultCacheTtlSeconds: Number(process.env.CRUCIBLE_CACHE_TTL ?? 0), rateLimitPerMinute: process.env.CRUCIBLE_RATE_LIMIT ? Number(process.env.CRUCIBLE_RATE_LIMIT) : undefined, redactByDefault: process.env.CRUCIBLE_REDACT === "1" });
   const runtime = new AgentRuntime(store, gateway);
   const ragPipeline = new RagPipeline(store, gateway);
   const registry = new AgentRegistry();
   if (opts.registerDemoAgents ?? true) for (const d of demoAgents(store, ragPipeline, opts.defaultModel ?? (providers.some((p) => p.name === "anthropic") ? "claude-haiku-5-5" : "mock-smart"))) registry.register(d);
   store.workbench.ensureDefaultProject();
-  const ctx: AppContext = { store, gateway, runtime, rag: ragPipeline, bus: new Bus(), agents: registry, adminToken: opts.adminToken ?? process.env.CRUCIBLE_ADMIN_TOKEN, jobs: new Map() };
+  const ctx: AppContext = { store, gateway, runtime, rag: ragPipeline, bus: new Bus(), agents: registry, adminToken: opts.adminToken ?? process.env.CRUCIBLE_ADMIN_TOKEN, jobs: new Map(), freeCatalog: null, freeRouteAuto };
+  if ((opts.discoverFreeModels ?? process.env.CRUCIBLE_FREE_DISCOVERY !== "off") && providers.some((p) => p.name === "opencode" || p.name === "cline")) {
+    void refreshFreeModels(ctx).catch((err: Error) => console.error("free-model discovery failed:", err.message));
+  }
   if (opts.loadUserAgents ?? true) void loadUserAgents(ctx).then((n) => { if (n) console.log(`  loaded ${n} user agent(s) from ${process.env.CRUCIBLE_AGENTS ?? "crucible.agents.mjs"}`); }).catch((err: Error) => console.error("failed to load user agents:", err.message));
   return ctx;
 }
@@ -47,7 +55,13 @@ function defaultRoutes(providers: Provider[]): RouterConfig {
   const has = (n: string) => providers.some((p) => p.name === n);
   const smart = [has("anthropic") && { provider: "anthropic", model: "claude-sonnet-5-5" }, has("openai") && { provider: "openai", model: "gpt-4.1" }, { provider: "mock", model: "mock-smart" }].filter(Boolean) as Array<{ provider: string; model: string }>;
   const fast = [has("anthropic") && { provider: "anthropic", model: "claude-haiku-5-5" }, has("openai") && { provider: "openai", model: "gpt-4.1-mini" }, { provider: "mock", model: "mock-fast" }].filter(Boolean) as Array<{ provider: string; model: string }>;
-  return { routes: [{ name: "smart", strategy: "fallback", targets: smart }, { name: "fast", strategy: "fallback", targets: fast, cacheTtlSeconds: 300 }], defaultRoute: "smart" };
+  const routes: RouterConfig["routes"] = [{ name: "smart", strategy: "fallback", targets: smart }, { name: "fast", strategy: "fallback", targets: fast, cacheTtlSeconds: 300 }];
+  // Subscription logins are opt-in by route name, never part of smart/fast, so they are only spent when asked for.
+  if (has("claude-code")) routes.push({ name: "claude-subscription", strategy: "fallback", targets: [{ provider: "claude-code", model: "sonnet" }, { provider: "claude-code", model: "haiku" }] });
+  if (has("codex")) routes.push({ name: "codex-subscription", strategy: "fallback", targets: [{ provider: "codex", model: "default" }] });
+  // Until discovery finishes, `free` starts from OpenCode's known free models.
+  if (has("opencode")) routes.push({ name: "free", strategy: "fallback", targets: ["opencode/glm-5.3-flash-free", "opencode/deepseek-v4.1-flash-free", "opencode/nemotron-3.5-lightning-free"].map((m) => ({ provider: "opencode", model: m })) });
+  return { routes, defaultRoute: "smart" };
 }
 
 export function createApp(ctx: AppContext, opts: { quiet?: boolean } = {}) {

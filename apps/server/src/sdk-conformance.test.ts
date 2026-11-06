@@ -140,3 +140,48 @@ describe("official OpenAI SDK against /v1", () => {
     expect((err as InstanceType<typeof OpenAI.APIError>).code).toBe("model_not_found");
   });
 });
+
+describe("official OpenAI SDK against /v1/responses (Responses API, used by Codex)", () => {
+  const client = () => new OpenAI({ apiKey: "unused-local", baseURL: `${base}/v1` });
+  const fnTool = { type: "function" as const, name: "get_weather", description: "Weather for a city", parameters: weatherTool.input_schema, strict: false };
+
+  it("creates a response", async () => {
+    const r = await client().responses.create({ model: "mock-fast", instructions: "Be brief.", input: "ping" });
+    expect(r.object).toBe("response");
+    expect(r.status).toBe("completed");
+    expect(r.output_text).toBe("pong from crucible");
+    expect(r.usage!.input_tokens).toBeGreaterThan(0);
+  });
+
+  it("streams a response and the SDK assembles the final output", async () => {
+    const stream = client().responses.stream({ model: "mock-fast", input: [{ role: "user", content: [{ type: "input_text", text: "ping" }] }] });
+    let deltas = "";
+    stream.on("response.output_text.delta", (e) => { deltas += e.delta; });
+    const final = await stream.finalResponse();
+    expect(deltas).toBe("pong from crucible");
+    expect(final.output_text).toBe("pong from crucible");
+    expect(final.status).toBe("completed");
+  });
+
+  it("round-trips a function call with call_id and function_call_output", async () => {
+    const first = await client().responses.create({ model: "mock-fast", tools: [fnTool], input: "weather in Paris?" });
+    const call = first.output.find((o) => o.type === "function_call") as { type: "function_call"; call_id: string; name: string; arguments: string } | undefined;
+    expect(call).toBeDefined();
+    expect(call!.name).toBe("get_weather");
+    expect(JSON.parse(call!.arguments)).toEqual({ city: "Paris" });
+    const second = await client().responses.create({ model: "mock-fast", tools: [fnTool], input: [
+      { role: "user", content: "weather in Paris?" },
+      { type: "function_call", call_id: call!.call_id, name: call!.name, arguments: call!.arguments },
+      { type: "function_call_output", call_id: call!.call_id, output: "sunny, 21C" },
+    ] });
+    expect(second.output_text).toBe("It is sunny in Paris.");
+  });
+
+  it("streams a function call", async () => {
+    const stream = client().responses.stream({ model: "mock-fast", tools: [fnTool], input: "weather in Paris?" });
+    const final = await stream.finalResponse();
+    const call = final.output.find((o) => o.type === "function_call") as { name: string; arguments: string } | undefined;
+    expect(call?.name).toBe("get_weather");
+    expect(JSON.parse(call!.arguments)).toEqual({ city: "Paris" });
+  });
+});

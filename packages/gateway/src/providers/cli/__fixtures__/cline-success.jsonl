@@ -1,0 +1,18 @@
+{"ts":"2026-11-06T10:34:46.814Z","type":"hook_event","hookEventName":"agent_start","agentId":"x","taskId":"x","parentAgentId":null}
+{"ts":"2026-11-06T10:34:46.817Z","type":"agent_event","event":{"type":"iteration_start","iteration":1}}
+{"ts":"2026-11-06T10:34:46.889Z","type":"agent_event","event":{"type":"content_start","contentType":"text","text":"(demo ","accumulated":"(demo "}}
+{"ts":"2026-11-06T10:34:46.889Z","type":"agent_event","event":{"type":"content_start","contentType":"text","text":"model) ","accumulated":"(demo model) "}}
+{"ts":"2026-11-06T10:34:46.890Z","type":"agent_event","event":{"type":"content_start","contentType":"text","text":"You ","accumulated":"(demo model) You "}}
+{"ts":"2026-11-06T10:34:46.890Z","type":"agent_event","event":{"type":"content_start","contentType":"text","text":"said: ","accumulated":"(demo model) You said: "}}
+{"ts":"2026-11-06T10:34:46.891Z","type":"agent_event","event":{"type":"content_start","contentType":"text","text":"Reply ","accumulated":"(demo model) You said: Reply "}}
+{"ts":"2026-11-06T10:34:46.893Z","type":"agent_event","event":{"type":"content_start","contentType":"text","text":"with ","accumulated":"(demo model) You said: Reply with "}}
+{"ts":"2026-11-06T10:34:46.893Z","type":"agent_event","event":{"type":"content_start","contentType":"text","text":"exactly ","accumulated":"(demo model) You said: Reply with exactly "}}
+{"ts":"2026-11-06T10:34:46.893Z","type":"agent_event","event":{"type":"content_start","contentType":"text","text":"the ","accumulated":"(demo model) You said: Reply with exactly the "}}
+{"ts":"2026-11-06T10:34:46.895Z","type":"agent_event","event":{"type":"content_start","contentType":"text","text":"word ","accumulated":"(demo model) You said: Reply with exactly the word "}}
+{"ts":"2026-11-06T10:34:46.896Z","type":"agent_event","event":{"type":"content_start","contentType":"text","text":"pong.","accumulated":"(demo model) You said: Reply with exactly the word pong."}}
+{"ts":"2026-11-06T10:34:46.899Z","type":"agent_event","event":{"type":"usage","inputTokens":1115,"outputTokens":14,"totalInputTokens":1115,"totalOutputTokens":14,"totalCost":0}}
+{"ts":"2026-11-06T10:34:46.901Z","type":"agent_event","event":{"type":"content_end","contentType":"text","text":"(demo model) You said: Reply with exactly the word pong."}}
+{"ts":"2026-11-06T10:34:46.903Z","type":"agent_event","event":{"type":"iteration_end","iteration":1,"hadToolCalls":false,"toolCallCount":0}}
+{"ts":"2026-11-06T10:34:46.905Z","type":"hook_event","hookEventName":"agent_end","agentId":"x","taskId":"x","parentAgentId":null}
+{"ts":"2026-11-06T10:34:46.906Z","type":"agent_event","event":{"type":"done","reason":"completed","text":"(demo model) You said: Reply with exactly the word pong.","iterations":1,"usage":{"inputTokens":1115,"outputTokens":14,"totalCost":0}}}
+{"ts":"2026-11-06T10:34:46.919Z","type":"run_result","finishReason":"completed","iterations":1,"usage":{"inputTokens":1115,"outputTokens":14,"cacheReadTokens":0,"cacheWriteTokens":0,"totalCost":0},"aggregateUsage":{"inputTokens":1115,"outputTokens":14,"cacheReadTokens":0,"cacheWriteTokens":0,"totalCost":0},"durationMs":102,"text":"(demo model) You said: Reply with exactly the word pong.","model":{"id":"x","provider":"openai-compatible"}}

@@ -1,0 +1,4 @@
+{"ts":"2026-11-06T10:35:14.364Z","type":"hook_event","hookEventName":"agent_error","agentId":"x","taskId":"x","parentAgentId":null}
+{"ts":"2026-11-06T10:35:14.365Z","type":"agent_event","event":{"type":"error","error":{"name":"Error","message":"Missing Authentication header"},"errorClass":"auth","recoverable":false,"iteration":1}}
+{"ts":"2026-11-06T10:35:14.377Z","type":"run_result","finishReason":"error","iterations":1,"usage":{"inputTokens":0,"outputTokens":0,"cacheReadTokens":0,"cacheWriteTokens":0,"totalCost":0},"durationMs":479,"text":"Missing Authentication header","model":{"id":"google/gemma-4-31b-it:free","provider":"openrouter"}}
+{"ts":"2026-11-06T10:35:14.378Z","type":"error","message":"Missing Authentication header"}

@@ -14,6 +14,10 @@ export interface AppContext {
   agents: AgentRegistry;
   /** Optional admin token protecting /api. When unset, the server is in trusted local mode. */
   adminToken?: string;
+  /** Free-model catalogue discovered from OpenCode and OpenRouter (null until the first discovery finishes). */
+  freeCatalog: import("@crucible/gateway").FreeModelCatalog | null;
+  /** True when the `free` route is generated automatically (the user has not saved their own). */
+  freeRouteAuto: boolean;
   /** Background eval jobs by eval id. */
   jobs: Map<string, { done: number; total: number; status: string; error?: string }>;
 }

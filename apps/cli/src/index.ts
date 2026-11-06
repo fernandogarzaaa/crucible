@@ -2,11 +2,12 @@
 import { parseArgs } from "node:util";
 import { writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { Store } from "@crucible/core";
-import { Gateway, MemoryCache, Router, RouterConfig, providersFromEnv } from "@crucible/gateway";
+import { spawn } from "node:child_process";
+import { Gateway, LOGIN, MemoryCache, Router, RouterConfig, allCliStatus, buildFreeRoute, cliBinary, discoverFreeModels, providersFromEnv, which, type CliName } from "@crucible/gateway";
 import { calibrateJudge, loadEvalSpec, runEval } from "@crucible/evals";
 import { AgentRuntime, diffRuns } from "@crucible/agents";
 import { RagPipeline } from "@crucible/rag";
-import { createContext, startServer } from "@crucible/server";
+import { createContext, refreshFreeModels, startServer } from "@crucible/server";
 import { die, fmt, loadDotenv, readJson, table } from "./util.js";
 
 loadDotenv();
@@ -37,6 +38,11 @@ const HELP = `crucible <command> [subcommand] [options]
 
   ops approvals | ops approve <id> [--reason r] | ops reject <id> [--reason r] | ops audit | ops overview
 
+  chat <model|route> "<prompt>" [--system s]   One-off call through the gateway, streamed (e.g. chat free "hi")
+  cli status                              Wrapped CLIs: installed, signed in, and how to sign in
+  cli login <claude|codex|opencode|cline> [--device]   Run the vendor's own login in this terminal
+  cli free                                Discover free models (OpenCode Zen, OpenRouter) and show the free route
+
 Global options: --project <slug> (default: default)   --json   --help
 Data lives in $CRUCIBLE_HOME (default ./.crucible) or in $CRUCIBLE_DATABASE_URL (postgres://… or pglite://…). Provider keys come from .env / environment.`;
 
@@ -53,7 +59,7 @@ const [cmd, sub, ...rest] = positionals;
 const out = (v: unknown) => console.log(flags.json ? JSON.stringify(v, null, 2) : v);
 
 function ctx() {
-  const c = createContext({ store: new Store() });
+  const c = createContext({ store: new Store(), discoverFreeModels: false });
   const project = c.store.workbench.getProject(String(flags.project)) ?? die(`project not found: ${flags.project}`);
   return { ...c, project };
 }
@@ -177,6 +183,60 @@ async function main() {
       if (sub === "key" && rest[0] === "create") { const { key, secret } = c.store.gateway.createKey(c.project.id, rest[1] ?? die("name")); return out(flags.json ? { ...key, secret } : `${secret}\n(store this now; it is not shown again)`); }
       if (sub === "budget" && rest[0] === "set") return out(c.store.gateway.setBudget({ projectId: c.project.id, scope: rest[1] ?? "project", limitUsd: Number(rest[2] ?? die("usd")), period: (rest[3] as never) ?? "monthly" }));
       if (sub === "budget" && rest[0] === "list") return out(c.store.gateway.listBudgets(c.project.id));
+      break;
+    }
+    case "chat": {
+      const c = ctx();
+      const model = sub ?? die("model or route required, e.g. crucible chat free \"hello\"");
+      const prompt = rest.join(" ") || die("prompt required");
+      const messages = [...(flags.system ? [{ role: "system" as const, content: String(flags.system) }] : []), { role: "user" as const, content: prompt }];
+      if (model === "free" && c.freeRouteAuto) await refreshFreeModels(c).catch(() => undefined);
+      let usage: { inputTokens: number; outputTokens: number } | null = null;
+      for await (const ev of c.gateway.stream({ messages, config: { model } }, { projectId: c.project.id })) {
+        if (ev.type === "text_delta") process.stdout.write(ev.text);
+        else if (ev.type === "end") usage = ev.usage;
+        else if (ev.type === "error") {
+          const allLimited = /all \d+ target\(s\) failed/.test(ev.error) && c.store.gateway.list(c.project.id, 50).filter((r) => r.route === model).slice(0, 3).every((r) => r.status === 429);
+          die(allLimited ? `${ev.error}\nhint: the free tiers are rate limiting this machine. Set OPENROUTER_API_KEY (free at openrouter.ai) to add OpenRouter free models to the route, or retry later.` : ev.error);
+        }
+      }
+      const served = c.store.gateway.list(c.project.id, 1)[0];
+      process.stdout.write("\n");
+      if (!flags.json) console.error(`\n[${served?.provider ?? "?"}/${served?.servedModel ?? model}${served?.fallbackDepth ? ` after ${served.fallbackDepth} fallback(s)` : ""} · ${usage?.inputTokens ?? 0} in / ${usage?.outputTokens ?? 0} out · ${fmt.ms(served?.latencyMs ?? 0)}]`);
+      return;
+    }
+    case "cli": {
+      if (sub === "status") {
+        const st = await allCliStatus();
+        if (flags.json) return out(st);
+        console.log(table(st.map((s) => ({ cli: s.name, purpose: s.purpose, installed: s.installed ? "yes" : "no", version: s.version ?? "", "signed in": s.loggedIn === null ? "unknown" : s.loggedIn ? "yes" : "no", detail: s.detail }))));
+        const todo = st.filter((s) => s.installed && s.loggedIn === false);
+        if (todo.length) console.log(`\nSign in with:\n${todo.map((s) => `  crucible cli login ${s.name === "claude-code" ? "claude" : s.name}    (runs: ${s.loginCommand})`).join("\n")}`);
+        console.log(`\nUse them by pinning (claude-code/sonnet, codex/default, opencode/<model>, cline/<provider>/<model>) or via the routes claude-subscription, codex-subscription and free.`);
+        return;
+      }
+      if (sub === "login") {
+        const which_ = (rest[0] ?? die("which CLI? claude | codex | opencode | cline")) as string;
+        const name = (which_ === "claude" ? "claude-code" : which_) as CliName;
+        if (!LOGIN[name]) die(`unknown CLI: ${which_}`);
+        const bin = cliBinary(name);
+        if (!which(bin)) die(`${bin} is not installed`);
+        const args = [...LOGIN[name].args, ...(name === "codex" && flags.device ? ["--device-auth"] : [])];
+        console.error(`running: ${bin} ${args.join(" ")}\n(credentials stay with ${bin}; Crucible never reads them)\n`);
+        const code = await new Promise<number>((resolve) => spawn(bin, args, { stdio: "inherit" }).on("close", (c) => resolve(c ?? 1)));
+        process.exit(code);
+      }
+      if (sub === "free") {
+        const cat = await discoverFreeModels();
+        const have = { opencode: !!which("opencode"), cline: !!which("cline"), openrouterKey: !!process.env.OPENROUTER_API_KEY };
+        const route = buildFreeRoute(cat, have);
+        if (flags.json) return out({ catalog: cat, route });
+        console.log(`OpenCode Zen free models (no login needed${have.opencode ? "" : "; opencode not installed"}):\n${cat.opencodeZen.map((m) => `  opencode/${m}`).join("\n") || "  (none found)"}`);
+        console.log(`\nOpenRouter free models (${have.openrouterKey ? "OPENROUTER_API_KEY set" : "need OPENROUTER_API_KEY, free to create"}): ${cat.openrouter.length}\n${cat.openrouter.slice(0, 8).map((m) => `  cline/openrouter/${m}`).join("\n")}${cat.openrouter.length > 8 ? "\n  ..." : ""}`);
+        if (cat.errors.length) console.log(`\nerrors: ${cat.errors.join("; ")}`);
+        console.log(`\nfree route (fallback order):\n${route ? route.targets.map((t, i) => `  ${i + 1}. ${t.provider}/${t.model}`).join("\n") : "  (no free targets available)"}`);
+        return;
+      }
       break;
     }
     case "ops": {

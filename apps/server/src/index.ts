@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { createApp, createContext } from "./app.js";
 
 export { createApp, createContext } from "./app.js";
+export { refreshFreeModels } from "./free-models.js";
 export type { AppContext } from "./context.js";
 export { AgentRegistry } from "./agents-registry.js";
 

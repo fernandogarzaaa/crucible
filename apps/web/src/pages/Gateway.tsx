@@ -5,14 +5,15 @@ import { Badge, Empty, Json, Tabs, confirmThen, toast } from "../components/ui";
 
 export function GatewayPage() {
   const project = useProject();
-  const [tab, setTab] = useState<"requests" | "routes" | "budgets" | "keys" | "playground">("requests");
+  const [tab, setTab] = useState<"requests" | "routes" | "cli" | "budgets" | "keys" | "playground">("requests");
   const { data: stats } = useFetch<any>(`/api/projects/${project}/gateway/stats`, { pollMs: 5000 });
   return <>
     <div className="head"><div><h1>Gateway</h1><div className="sub">One endpoint for every model. Point any OpenAI SDK at <code>/v1</code> or any Anthropic SDK at <code>/v1/messages</code>.</div></div>
       {stats && <div className="row muted small">{stats.requests} requests · {stats.cached} cached · {stats.errors} errors · {fmt.usd(stats.costUsd)} (24h)</div>}</div>
-    <Tabs tabs={[["requests", "Requests"], ["routes", "Routes"], ["budgets", "Budgets"], ["keys", "API keys"], ["playground", "Playground"]]} value={tab} onChange={setTab} />
+    <Tabs tabs={[["requests", "Requests"], ["routes", "Routes"], ["cli", "CLI providers"], ["budgets", "Budgets"], ["keys", "API keys"], ["playground", "Playground"]]} value={tab} onChange={setTab} />
     {tab === "requests" && <Requests project={project} byModel={stats?.byModel ?? []} />}
     {tab === "routes" && <Routes />}
+    {tab === "cli" && <CliProviders />}
     {tab === "budgets" && <Budgets project={project} />}
     {tab === "keys" && <Keys project={project} />}
     {tab === "playground" && <Playground project={project} />}
@@ -77,5 +78,34 @@ function Playground({ project }: { project: string }) {
     <div className="card"><div className="grid g2"><label>model / route<select value={model} onChange={(e) => setModel(e.target.value)}>{options.map((m: string) => <option key={m}>{m}</option>)}</select></label><label>compare with<select multiple value={compare} onChange={(e) => setCompare([...e.target.selectedOptions].map((o) => o.value))} style={{ height: 70 }}>{options.filter((m: string) => m !== model).map((m: string) => <option key={m}>{m}</option>)}</select></label></div>
       <label style={{ marginTop: 8 }}>system<textarea value={system} onChange={(e) => setSystem(e.target.value)} style={{ minHeight: 60 }} /></label><label style={{ marginTop: 8 }}>user<textarea value={user} onChange={(e) => setUser(e.target.value)} /></label><button className="primary" disabled={busy} onClick={run} style={{ marginTop: 8 }}>{busy ? "Running…" : compare.length ? `Run ${compare.length + 1} side by side` : "Run"}</button></div>
     <div className="grid" style={{ gap: 10 }}>{out?.map((r: any, i: number) => <div key={i} className="card">{r.error ? <><Badge kind="error">{r.model}</Badge><div className="mono small" style={{ color: "var(--err)", marginTop: 6 }}>{r.error}</div></> : <><div className="row small muted"><Badge>{r.provider}</Badge><span className="mono">{r.model}</span> · {fmt.ms(r.latencyMs)} · {r.usage.inputTokens}/{r.usage.outputTokens} tok · {fmt.usd(r.costUsd)}{r.cached && <Badge kind="ok">cached</Badge>}</div><Json value={r.message.content} /></>}</div>)}{!out && <div className="card muted">Responses appear here. Select several models to compare them side by side.</div>}</div>
+  </div>;
+}
+
+function CliProviders() {
+  const { data, reload } = useFetch<any>("/api/gateway/cli");
+  const [busy, setBusy] = useState(false);
+  if (!data) return <div className="muted">Checking installed CLIs…</div>;
+  const refresh = async () => { setBusy(true); try { await api.post("/api/gateway/free/refresh"); toast("free models rediscovered"); reload(); } catch (e) { toast((e as Error).message, true); } finally { setBusy(false); } };
+  const pin: Record<string, string> = { "claude-code": "claude-code/sonnet", codex: "codex/default", opencode: "opencode/opencode/<model>-free", cline: "cline/openrouter/<model>:free" };
+  return <div className="grid" style={{ gap: 14 }}>
+    <div className="card">
+      <h2>Wrapped CLIs</h2>
+      <div className="muted small" style={{ marginBottom: 10 }}>Crucible runs each vendor's own CLI as a subprocess, so requests use the login that CLI already holds. Credentials never pass through Crucible. Tool calling and images are not supported on these routes.</div>
+      <table><thead><tr><th>CLI</th><th>Use</th><th>Installed</th><th>Signed in</th><th>Pin as</th><th>Detail</th></tr></thead>
+        <tbody>{data.clis.map((c: any) => <tr key={c.name}>
+          <td><strong>{c.name}</strong><div className="dim small">{c.version ?? ""}</div></td>
+          <td>{c.purpose === "subscription" ? <Badge kind="llm">subscription</Badge> : <Badge kind="ok">free models</Badge>}</td>
+          <td>{c.installed ? <Badge kind="ok">yes</Badge> : <Badge kind="error">no</Badge>}</td>
+          <td>{c.loggedIn === null ? <Badge>unknown</Badge> : c.loggedIn ? <Badge kind="ok">yes</Badge> : <Badge kind="warn">no</Badge>}</td>
+          <td className="mono small">{c.installed ? pin[c.name] : ""}</td>
+          <td className="small muted" style={{ maxWidth: 360 }}>{c.detail}{c.installed && c.loggedIn === false && <div style={{ marginTop: 4 }}>Sign in from a terminal: <code>crucible cli login {c.name === "claude-code" ? "claude" : c.name}</code></div>}</td>
+        </tr>)}</tbody></table>
+    </div>
+    <div className="card">
+      <div className="row" style={{ justifyContent: "space-between" }}><h2 style={{ margin: 0 }}>Free route</h2><button className="sm" disabled={busy} onClick={refresh}>{busy ? "Discovering…" : "Rediscover free models"}</button></div>
+      <div className="muted small" style={{ margin: "8px 0" }}>Send <code>model: "free"</code> to try these in order; a rate-limited model hands off to the next one.{!data.freeRouteAuto && " This route was saved by hand, so discovery does not change it."}</div>
+      {data.freeRoute ? <ol className="small mono" style={{ margin: 0, paddingLeft: 20 }}>{data.freeRoute.targets.map((t: any, i: number) => <li key={i}>{t.provider}/{t.model}</li>)}</ol> : <Empty>No free targets. Install OpenCode (<code>npm i -g opencode-ai</code>) or set OPENROUTER_API_KEY and install Cline.</Empty>}
+      {data.free && <div className="small dim" style={{ marginTop: 8 }}>Discovered {data.free.opencodeZen.length} OpenCode Zen and {data.free.openrouter.length} OpenRouter free models {fmt.ago(data.free.discoveredAt)}.{data.free.errors.length ? ` Errors: ${data.free.errors.join("; ")}` : ""}</div>}
+    </div>
   </div>;
 }

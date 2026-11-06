@@ -2,9 +2,10 @@ import { Hono } from "hono";
 import { stream } from "hono/streaming";
 import { z } from "zod";
 import { ChatRequest, listPricing } from "@crucible/core";
-import { GatewayError, RouterConfig } from "@crucible/gateway";
+import { GatewayError, RouterConfig, allCliStatus } from "@crucible/gateway";
+import { refreshFreeModels } from "../free-models.js";
 import type { Env } from "../context.js";
-import { fromAnthropicRequest, fromOpenAIRequest, toAnthropicEvents, toAnthropicResponse, toOpenAIChunks, toOpenAIResponse } from "../compat.js";
+import { fromAnthropicRequest, fromOpenAIRequest, fromResponsesRequest, responsesStreamer, toAnthropicEvents, toAnthropicResponse, toOpenAIChunks, toOpenAIResponse, toResponsesResponse } from "../compat.js";
 
 export const gatewayApi = new Hono<Env>();
 export const compat = new Hono<Env>();
@@ -33,6 +34,16 @@ gatewayApi.get("/gateway/models", (c) => {
   const router = c.var.ctx.gateway.router;
   const providers = router.listProviders().map((p) => ({ provider: p.name, models: p.models() }));
   return c.json({ providers, routes: router.getConfig().routes, pricing: listPricing() });
+});
+/** Wrapped vendor CLIs: install and login state, plus the discovered free-model catalogue. */
+gatewayApi.get("/gateway/cli", async (c) => {
+  const names = new Set(c.var.ctx.gateway.router.listProviders().map((p) => p.name));
+  const clis = (await allCliStatus()).map((s) => ({ ...s, registered: names.has(s.name) }));
+  return c.json({ clis, free: c.var.ctx.freeCatalog, freeRouteAuto: c.var.ctx.freeRouteAuto, freeRoute: c.var.ctx.gateway.router.getConfig().routes.find((r) => r.name === "free") ?? null });
+});
+gatewayApi.post("/gateway/free/refresh", async (c) => {
+  const catalog = await refreshFreeModels(c.var.ctx);
+  return c.json({ free: catalog, freeRoute: c.var.ctx.gateway.router.getConfig().routes.find((r) => r.name === "free") ?? null });
 });
 gatewayApi.get("/gateway/routes", (c) => c.json(c.var.ctx.gateway.router.getConfig()));
 gatewayApi.put("/gateway/routes", async (c) => {
@@ -93,6 +104,18 @@ compat.post("/embeddings", async (c) => {
   try {
     const r = await c.var.ctx.gateway.embed(body.model, inputs, { projectId: c.var.projectId, apiKeyId: c.var.apiKeyId });
     return c.json({ object: "list", model: r.model, data: r.embeddings.map((e, i) => ({ object: "embedding", index: i, embedding: e })), usage: { prompt_tokens: r.usage.inputTokens, total_tokens: r.usage.inputTokens } });
+  } catch (err) { const e = errBody(err); return c.json(e.body, e.status as 400); }
+});
+
+// ---- OpenAI Responses API: POST /v1/responses (Codex, newer OpenAI SDKs)
+compat.post("/responses", async (c) => {
+  const req = fromResponsesRequest(await c.req.json());
+  const ctx = { projectId: c.var.projectId, apiKeyId: c.var.apiKeyId, signal: c.req.raw.signal };
+  try {
+    if (!req.stream) return c.json(toResponsesResponse(await c.var.ctx.gateway.chat(req, ctx), req));
+    c.header("content-type", "text/event-stream"); c.header("cache-control", "no-cache");
+    const s = responsesStreamer(req.config.model);
+    return stream(c, async (out) => { for await (const ev of c.var.ctx.gateway.stream(req, ctx)) for (const frame of s.on(ev)) await out.write(frame); });
   } catch (err) { const e = errBody(err); return c.json(e.body, e.status as 400); }
 });
 

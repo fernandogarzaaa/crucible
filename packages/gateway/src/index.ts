@@ -10,3 +10,4 @@ export { MemoryCache, requestKey, type CacheStore } from "./cache.js";
 export { RateLimiter } from "./ratelimit.js";
 export { redactText, redactMessages, redactRequest, DEFAULT_RULES, type RedactionRule, type RedactionReport } from "./redact.js";
 export { providersFromEnv } from "./env.js";
+export * from "./providers/cli/index.js";
