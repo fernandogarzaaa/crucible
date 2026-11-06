@@ -10,7 +10,7 @@ export const gatewayApi = new Hono<Env>();
 export const compat = new Hono<Env>();
 
 const errBody = (err: unknown) => {
-  if (err instanceof GatewayError) return { status: err.status, body: { error: { message: err.message, type: err.code } } };
+  if (err instanceof GatewayError) return { status: err.status, body: { error: { message: err.message, type: err.code, code: err.code } } };
   return { status: 500, body: { error: { message: (err as Error).message ?? String(err), type: "internal" } } };
 };
 

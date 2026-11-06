@@ -133,7 +133,7 @@ Both `application/json` and `application/x-protobuf` (the SDK default) are accep
 ], "defaultRoute": "smart" }
 ```
 
-Clients send `model: "smart"`. Pin a provider with `anthropic/claude-haiku-5-5`. Budgets are scoped to `project`, `key:<id>`, `agent:<name>` or `model:<id>` and return HTTP 402 when a hard-stop limit is hit.
+Clients send `model: "smart"`. Pin a provider with `anthropic/claude-haiku-5-5`; a pin to a provider that is not configured fails with HTTP 404 `model_not_found` rather than being rerouted. Bare model names no provider claims fall back to `defaultRoute`. Budgets are scoped to `project`, `key:<id>`, `agent:<name>` or `model:<id>` and return HTTP 402 when a hard-stop limit is hit.
 
 ## Configuration
 
@@ -158,6 +158,11 @@ Everything in this repository is Apache-2.0, including the Postgres backend. The
 ```bash
 pnpm test          # vitest across all packages; store/server suites run on SQLite and embedded Postgres (PGlite)
 CRUCIBLE_TEST_PG_URL=postgres://user@localhost:5432/crucible pnpm test   # also runs the real-Postgres suites (CI does this with a service container)
+```
+
+The server suite includes conformance tests that drive Crucible with the unmodified official `@anthropic-ai/sdk` and `openai` clients: plain, streamed and tool-calling requests, embeddings, model listing and error mapping. Calls to the real Anthropic and OpenAI APIs are not part of the suite; run the gateway with `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` set to exercise them.
+
+```bash
 pnpm typecheck
 pnpm --filter @crucible/web dev     # Vite dev server on :4801 proxying to the API on :4800
 ```

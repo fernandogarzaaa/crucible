@@ -62,6 +62,12 @@ export class Gateway {
     this.now = options.clock ?? Date.now;
   }
 
+  /** Routing failures are client errors (unknown model or provider), not upstream failures. */
+  private resolve(model: string) {
+    try { return this.router.resolve(model); }
+    catch (err) { throw new GatewayError((err as Error).message, 404, "model_not_found"); }
+  }
+
   private preflight(req: ChatRequest, ctx: CallContext): { attempts: ResolvedTarget[]; req: ChatRequest; cacheTtl: number; routeName: string } {
     if (this.limiter) {
       const key = ctx.limiterKey ?? ctx.apiKeyId ?? ctx.projectId;
@@ -72,7 +78,7 @@ export class Gateway {
       const exceeded = this.store.gateway.checkBudgets(ctx.projectId, scopes);
       if (exceeded) throw new GatewayError(`budget exceeded for ${exceeded.scope} (${exceeded.period}): $${exceeded.spentUsd.toFixed(4)} of $${exceeded.limitUsd}`, 402, "budget_exceeded");
     }
-    const { attempts, route } = this.router.resolve(req.config.model);
+    const { attempts, route } = this.resolve(req.config.model);
     const redact = route?.redact ?? this.opts.redactByDefault;
     const effective = redact ? redactRequest(req, this.opts.redactionRules).request : req;
     const cacheTtl = route?.cacheTtlSeconds ?? this.opts.defaultCacheTtlSeconds;
@@ -158,7 +164,7 @@ export class Gateway {
   }
 
   async embed(model: string, inputs: string[], ctx: CallContext): Promise<{ embeddings: number[][]; usage: Usage; costUsd: number; model: string; provider: string }> {
-    const { attempts } = this.router.resolve(model);
+    const { attempts } = this.resolve(model);
     let lastErr: unknown;
     for (const t of attempts) {
       if (!t.provider.embed) continue;

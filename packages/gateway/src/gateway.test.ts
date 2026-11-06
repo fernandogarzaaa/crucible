@@ -82,6 +82,10 @@ describe("Gateway", () => {
     const b = new MockProvider({ name: "b" });
     const router = new Router([a, b], { routes: [{ name: "cheap", strategy: "cheapest", targets: [{ provider: "a", model: "claude-sonnet-5-5" }, { provider: "b", model: "claude-haiku-5-5" }] }] });
     expect(router.resolve("b/mock-x").attempts[0]?.provider.name).toBe("b");
+    // A pin to a provider that does not exist fails even when a default route is configured.
+    const withDefault = new Router([a, b], { routes: [{ name: "cheap", strategy: "fallback", targets: [{ provider: "a", model: "m" }] }], defaultRoute: "cheap" });
+    expect(() => withDefault.resolve("nope/m")).toThrow(/unknown provider "nope"/);
+    expect(withDefault.resolve("totally-unknown-model").route?.name).toBe("cheap");
     expect(router.resolve("cheap").attempts.map((t) => t.model)).toEqual(["claude-haiku-5-5", "claude-sonnet-5-5"]);
   });
 });

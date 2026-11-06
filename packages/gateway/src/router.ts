@@ -46,7 +46,14 @@ export class Router {
    *  - a bare model id picks the first provider that claims it
    */
   resolve(requested: string): { attempts: ResolvedTarget[]; route?: Route } {
-    const route = this.config.routes.find((r) => r.name === requested) ?? (this.config.defaultRoute && !this.directlyServable(requested) ? this.config.routes.find((r) => r.name === this.config.defaultRoute) : undefined);
+    const named = this.config.routes.find((r) => r.name === requested);
+    if (named) return { attempts: this.expand(named), route: named };
+    // An explicit `provider/model` pin must never be silently rerouted to the default route.
+    if (requested.includes("/")) {
+      const [pname] = requested.split("/");
+      if (!this.provider(pname!)) throw new Error(`unknown provider "${pname}" in model "${requested}" (configured: ${this.providers.map((p) => p.name).join(", ")})`);
+    }
+    const route = this.config.defaultRoute && !this.directlyServable(requested) ? this.config.routes.find((r) => r.name === this.config.defaultRoute) : undefined;
     if (route) return { attempts: this.expand(route), route };
     if (requested.includes("/")) {
       const [pname, ...rest] = requested.split("/");
